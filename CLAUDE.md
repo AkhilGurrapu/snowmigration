@@ -3,6 +3,13 @@
 ### **Role & Context**
 You are an expert Snowflake migration architect specializing in snowflake cross-account migrations within the same Snowflake organization. Your task is to design and implement a selective object migration strategy from account `imcust` (database: `prod_db`) to account `imsdlc` (database: `dev_db`), focusing on schemas `mart_investments_bolt` and `src_investments_bolt` with complete dependency resolution.
 
+
+ASK/goal/prompt:
+```
+Great, so here we are having let's say the source account name is IMCUST and target account name is IMSDLC and we are migrating objects within source database which is prod_db into the target database which will be dev_db. the name of schema in 'mart_investments_bolt' schema same in both accounts/databases.
+ I like the way you are just mentioned about using data shares and CTAS. So here for getting all the dependencies we are using SNOWFLAKE.CORE.GET_LINEAGE function within the snowflake where it lists all the tables/views which are upstream (as we are only focusing on upstream dependencies here) and once we got that dependencies we will extracting the DDLs for each and every object and then replacing the database name with the the target dev_db database name instead of prod_db database name and running the scripts on the target side and for this dependency objects only we are using data sharing where in between having a database role where we will be granting select on all these dependency objects to a database role and granting this database role to a data share so that it will be shared from source to target account(recommended process for data sharing) and then using CTAS in order to populate all these objects on target side. How does this plan sounds or does it complex? If it sounds good for you I want to automate this process where on the source side I will be just inputting the list of objects that I want to migrate with the database name, schema name, and object names and it should get all the dependencies and get all the DDLs and change the name of the database because the schema names in both source and target are the same so we are not worrying about the schema names here we are just worrying about the database names and giving me a list of DDL operations that needs to be executed on the target side and for all the upstream dependencies which will which needs to be added to a database role and then to an share so that it will be present on target side and with this collected DDLs will be run on target side and creating the CTAS. So I want all this to be automated and easier for any futuristic migration similar to this. I don't know what's the best approach is please do a deep search deep thing do Google search web search take time think thoroughly and give me the best possible solutions. If possible use stored procedures for this automation processes or anything that makes sense.
+```
+
 ### **Authentication Setup**
 
 **Configuration Files:**
@@ -35,13 +42,7 @@ You are an expert Snowflake migration architect specializing in snowflake cross-
 **Source Environment:**
 - Account: `imcust`
 - Database: `prod_db`
-- Schemas: `mart_investments_bolt`, `src_investments_bolt`
-- Primary Objects: 5 tables, 1 view, 2 stored procedures
-    Migration Selection:
-    - SRC: stock_metadata_raw (1 table)
-    - MART: dim_stocks, dim_portfolios, fact_transactions, fact_daily_positions (4 tables)
-    - VIEW: vw_current_holdings (depends on multiple tables)
-    - PROCEDURES: sp_load_dim_stocks, sp_calculate_daily_positions (2 procedures)
+- Schemas: `mart_investments_bolt`, 
 - Status: Manually created (no IaC), fully operational production environment
 - Remember both the schemas and database, along with objects alreday exists above, in imcust
 
@@ -52,59 +53,3 @@ You are an expert Snowflake migration architect specializing in snowflake cross-
 - Status: Schemas exist but objects need creation
 - Requirement: Full object definitions + data migration
 - both the schemas and database already exists in imsdlc
-
-**Team Structure:**
-1. **Analytics Platform Team:** Snowflake administrators, migration orchestration owners
-2. **DataOps Team:** Security model, RBAC implementation, grants management
-3. **Product Teams:** Primary stakeholders, object owners, validation responsibility
-
-**Constraints:**
-- Both accounts are in the **same Snowflake organization**
-- **NO external stages** (S3, Azure, GCS) permitted for data transfer
-- **NO third-party tools** (except potentially Terraform/Flyway if justified)
-- Must be **enterprise-grade**, **repeatable**, and **auditable**
-- Must handle **multi-GB data volumes** efficiently
-
-***
-
-### **Proposed Approach (Challenge These Assumptions)**
-
-####Data Shares Are Read-Only**
-**my Assumption:** Use data shares for both DDL metadata table and actual data, then use CTA (CREATE TABLE AS) to insert data from shared objects.
-
-**Reality Check:** Snowflake data shares provide **read-only access** to shared objects. While you CAN query data from a share and use CTA to create new tables in `imsdlc`, you **CANNOT**:
-- Write DDL back to the source account's metadata table from the consumer
-- Execute stored procedures in the source that modify objects in the shared database
-- Share mutable metadata coordination tables
-
-
-#### **DDL Transformation Complexity**
-**my Assumption:** Simple string replacement of `prod_db` → `dev_db` in DDL statements.
-
-
-#### **Data Share for Data Transfer**
-**my Assumption:** Data shares are superior to staging for cross-account data transfer.
-
-**Validation:** **CORRECT**. For accounts in the same organization and region, data shares provide:
-- Zero-copy architecture (no storage costs in consumer account)
-- Near-instantaneous access (no data movement latency)
-- No egress costs between accounts in same region
-- Real-time data access without ETL pipelines
-
-**Enhancement:** Pair this with CTA or INSERT INTO SELECT for actual data population in target account.
-
-### **Final**
-
-my core intuition is **sound**: data shares are the right mechanism for cross-account data transfer within the same organization. However, my architecture needs these **critical refinements**:
-
-1. **Accept data share read-only limitation** - design around it, not against it
-2. **Enhance dependency discovery** beyond OBJECT_DEPENDENCIES 
-3. **Implement robust DDL transformation** with validation
-4. **Create strong team coordination** protocols (especially for grants)
-5. **Build comprehensive monitoring** and validation frameworks
-
-**This is an enterprise-grade solution** because it's:
-- **Auditable:** Full logging of what was migrated, when, and by whom
-- **Repeatable:** Stored procedures can be reused for future migrations
-- **Reversible:** Clear rollback procedures if validation fails
-- **Collaborative:** Clear responsibilities for Analytics Platform, DataOps, and Product teams
