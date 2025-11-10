@@ -96,8 +96,9 @@ BEGIN
     -- -------------------------------------------------------------------------
     -- STEP 3: Grant schema usage for each schema
     -- -------------------------------------------------------------------------
-    FOR schema_rec IN (SELECT TRIM(VALUE) AS schema_name
-                       FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ','))) DO
+    LET schema_rs RESULTSET := (SELECT TRIM(VALUE) AS schema_name
+                                 FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ',')));
+    FOR schema_rec IN schema_rs DO
         sql_cmd := 'GRANT USAGE ON SCHEMA PROD_DB.' || schema_rec.schema_name ||
                    ' TO SHARE ' || :SHARE_NAME;
         EXECUTE IMMEDIATE :sql_cmd;
@@ -172,49 +173,86 @@ LANGUAGE SQL
 AS
 $$
 DECLARE
+    query_string VARCHAR;
     res RESULTSET;
+    table_query VARCHAR;
+    view_query VARCHAR;
+    proc_query VARCHAR;
 BEGIN
-    res := (
-        -- Extract Tables
-        SELECT
-            table_schema AS object_schema,
-            table_name AS object_name,
-            'TABLE' AS object_type,
-            GET_DDL('TABLE', 'PROD_DB.' || table_schema || '.' || table_name, TRUE) AS ddl_statement
+    -- Build dynamic query for tables
+    IF (:OBJECT_TYPES ILIKE '%TABLE%') THEN
+        SELECT LISTAGG(
+            'SELECT ''' || table_schema || ''' AS object_schema, ' ||
+            '''' || table_name || ''' AS object_name, ' ||
+            '''TABLE'' AS object_type, ' ||
+            'GET_DDL(''TABLE'', ''PROD_DB.' || table_schema || '.' || table_name || ''', TRUE) AS ddl_statement',
+            ' UNION ALL ')
+        INTO :table_query
         FROM PROD_DB.INFORMATION_SCHEMA.TABLES
         WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_EXTRACT, ',')))
-          AND table_type = 'BASE TABLE'
-          AND :OBJECT_TYPES ILIKE '%TABLE%'
+          AND table_type = 'BASE TABLE';
+    ELSE
+        table_query := '';
+    END IF;
 
-        UNION ALL
-
-        -- Extract Views
-        SELECT
-            table_schema AS object_schema,
-            table_name AS object_name,
-            'VIEW' AS object_type,
-            GET_DDL('VIEW', 'PROD_DB.' || table_schema || '.' || table_name, TRUE) AS ddl_statement
+    -- Build dynamic query for views
+    IF (:OBJECT_TYPES ILIKE '%VIEW%') THEN
+        SELECT LISTAGG(
+            'SELECT ''' || table_schema || ''' AS object_schema, ' ||
+            '''' || table_name || ''' AS object_name, ' ||
+            '''VIEW'' AS object_type, ' ||
+            'GET_DDL(''VIEW'', ''PROD_DB.' || table_schema || '.' || table_name || ''', TRUE) AS ddl_statement',
+            ' UNION ALL ')
+        INTO :view_query
         FROM PROD_DB.INFORMATION_SCHEMA.VIEWS
-        WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_EXTRACT, ',')))
-          AND :OBJECT_TYPES ILIKE '%VIEW%'
+        WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_EXTRACT, ',')));
+    ELSE
+        view_query := '';
+    END IF;
 
-        UNION ALL
-
-        -- Extract Procedures
-        SELECT
-            procedure_schema AS object_schema,
-            procedure_name AS object_name,
-            'PROCEDURE' AS object_type,
-            GET_DDL('PROCEDURE',
-                    'PROD_DB.' || procedure_schema || '.' || procedure_name ||
-                    '(' || COALESCE(argument_signature, '') || ')',
-                    TRUE) AS ddl_statement
+    -- Build dynamic query for procedures
+    IF (:OBJECT_TYPES ILIKE '%PROCEDURE%') THEN
+        SELECT LISTAGG(
+            'SELECT ''' || procedure_schema || ''' AS object_schema, ' ||
+            '''' || procedure_name || ''' AS object_name, ' ||
+            '''PROCEDURE'' AS object_type, ' ||
+            'GET_DDL(''PROCEDURE'', ''PROD_DB.' || procedure_schema || '.' || procedure_name ||
+            '(' || COALESCE(argument_signature, '') || ')' || ''', TRUE) AS ddl_statement',
+            ' UNION ALL ')
+        INTO :proc_query
         FROM PROD_DB.INFORMATION_SCHEMA.PROCEDURES
-        WHERE procedure_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_EXTRACT, ',')))
-          AND :OBJECT_TYPES ILIKE '%PROCEDURE%'
+        WHERE procedure_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_EXTRACT, ',')));
+    ELSE
+        proc_query := '';
+    END IF;
 
-        ORDER BY object_type, object_schema, object_name
-    );
+    -- Combine queries
+    query_string := '';
+    IF (table_query IS NOT NULL AND table_query != '') THEN
+        query_string := table_query;
+    END IF;
+    IF (view_query IS NOT NULL AND view_query != '') THEN
+        IF (query_string != '') THEN
+            query_string := query_string || ' UNION ALL ' || view_query;
+        ELSE
+            query_string := view_query;
+        END IF;
+    END IF;
+    IF (proc_query IS NOT NULL AND proc_query != '') THEN
+        IF (query_string != '') THEN
+            query_string := query_string || ' UNION ALL ' || proc_query;
+        ELSE
+            query_string := proc_query;
+        END IF;
+    END IF;
+
+    -- Execute dynamic query
+    IF (query_string != '') THEN
+        query_string := query_string || ' ORDER BY object_type, object_schema, object_name';
+        res := (EXECUTE IMMEDIATE :query_string);
+    ELSE
+        res := (SELECT NULL AS object_schema, NULL AS object_name, NULL AS object_type, NULL AS ddl_statement WHERE 1=0);
+    END IF;
 
     RETURN TABLE(res);
 END;
