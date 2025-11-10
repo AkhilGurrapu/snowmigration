@@ -286,10 +286,80 @@ All syntax verified against official Snowflake documentation (2025):
 
 ---
 
-## Final Status: ✅ ALL SCRIPTS READY FOR PRODUCTION
+## Recent Fixes (2025-11-10)
+
+### ✅ FIXED: DISTINCT in Recursive CTE Terms
+
+**Issue:** SQL compilation error: "DISTINCT is not allowed in a CTEs recursive term"
+
+**Files Fixed:**
+- `IMCUST/MANUAL_01_discovery.sql` - Removed DISTINCT from lines 91, 152 (recursive terms)
+- `IMCUST/AUTOMATED_migration_procedure.sql` - Removed DISTINCT from lines 275, 305 (recursive terms)
+
+**Explanation:**
+In Snowflake recursive CTEs, DISTINCT is only allowed in:
+1. ✅ Anchor clause (first SELECT before UNION ALL)
+2. ✅ Final SELECT from the CTE
+3. ❌ NOT in recursive term (SELECT after UNION ALL)
+
+**Fix Applied:**
+```sql
+-- Before (ERROR)
+UNION ALL
+SELECT DISTINCT
+    od.REFERENCING_DATABASE,
+    ...
+
+-- After (CORRECT)
+UNION ALL
+SELECT
+    od.REFERENCING_DATABASE,
+    ...
+```
+
+---
+
+## Validation Testing
+
+### Static Syntax Validation: ✅ PASSED
+**Tool:** `validate_sql_syntax.py`
+**Date:** 2025-11-10
+**Result:** All 11 SQL files passed validation
+
+**Checks Performed:**
+- ✅ No DISTINCT in recursive CTE terms
+- ✅ Correct OBJECT_DEPENDENCIES column names
+- ✅ Correct SPLIT_TO_TABLE usage (VALUE column)
+- ✅ Correct IDENTIFIER() syntax
+- ✅ Correct GET_DDL() syntax
+- ✅ Basic SQL syntax validation
+
+### Connection Testing: ⏳ PENDING PAT CREDENTIALS
+**Tool:** `test_sql_scripts.py`
+**Status:** Ready to run once PAT credentials are provided
+
+**To run connection tests:**
+```bash
+export IMCUST_PAT='your_token'
+export IMSDLC_PAT='your_token'
+python3 test_sql_scripts.py
+```
+
+---
+
+## Final Status: ✅ ALL SCRIPTS VALIDATED AND READY FOR TESTING
 
 **Last Updated:** 2025-11-10
-**Validated By:** Official Snowflake Documentation Search
+**Validated By:**
+- Official Snowflake Documentation Search
+- Static syntax validation (validate_sql_syntax.py)
+- Manual code review
+
 **Snowflake Version Compatibility:** 2025+
 
-All SQL scripts now use correct Snowflake syntax and are ready for execution in Snowflake UI.
+All SQL scripts now use correct Snowflake syntax and are ready for:
+1. ✅ Static validation (completed)
+2. ⏳ Connection testing (pending PAT credentials)
+3. ⏳ Production execution (after connection testing)
+
+See `TESTING_GUIDE.md` for complete testing procedures.

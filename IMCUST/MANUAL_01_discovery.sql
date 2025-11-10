@@ -88,7 +88,7 @@ WITH RECURSIVE upstream_deps AS (
     UNION ALL
 
     -- Recursive: What those dependencies depend on
-    SELECT DISTINCT
+    SELECT
         od.REFERENCING_DATABASE,
         od.REFERENCING_SCHEMA,
         od.REFERENCING_OBJECT_NAME,
@@ -149,7 +149,7 @@ WITH RECURSIVE downstream_deps AS (
     UNION ALL
 
     -- Recursive: What depends on those
-    SELECT DISTINCT
+    SELECT
         od.REFERENCING_DATABASE,
         od.REFERENCING_SCHEMA,
         od.REFERENCING_OBJECT_NAME,

@@ -272,7 +272,7 @@ BEGIN
 
             UNION ALL
 
-            SELECT DISTINCT
+            SELECT
                 od.REFERENCED_DATABASE,
                 od.REFERENCED_SCHEMA,
                 od.REFERENCED_OBJECT_NAME,
@@ -302,7 +302,7 @@ BEGIN
 
             UNION ALL
 
-            SELECT DISTINCT
+            SELECT
                 od.REFERENCING_DATABASE,
                 od.REFERENCING_SCHEMA,
                 od.REFERENCING_OBJECT_NAME,
