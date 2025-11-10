@@ -66,8 +66,6 @@ DECLARE
           AND table_type = 'BASE TABLE'
         ORDER BY table_schema, table_name;
 
-    table_rec RECORD;
-
 BEGIN
     result_msg := 'Starting table creation from share...\n';
 
@@ -135,8 +133,6 @@ DECLARE
         WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ',')))
           AND table_type = 'BASE TABLE'
         ORDER BY table_schema, table_name;
-
-    table_rec RECORD;
 
 BEGIN
     result_msg := 'Starting data population from share...\n';

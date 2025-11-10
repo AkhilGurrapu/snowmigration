@@ -29,6 +29,7 @@ DECLARE
     table_count INTEGER DEFAULT 0;
     dependency_count INTEGER DEFAULT 0;
     result_msg VARCHAR DEFAULT '';
+    sql_cmd VARCHAR;
 
     -- Cursor variables
     table_cursor CURSOR FOR
@@ -73,9 +74,6 @@ DECLARE
             REFERENCED_OBJECT_NAME AS table_name
         FROM all_dependencies
         WHERE REFERENCED_OBJECT_DOMAIN = 'TABLE';
-
-    table_rec RECORD;
-    sql_cmd VARCHAR;
 
 BEGIN
     result_msg := 'Starting migration preparation...\n';
