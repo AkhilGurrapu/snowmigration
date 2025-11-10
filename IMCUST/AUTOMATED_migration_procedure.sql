@@ -30,9 +30,45 @@ DECLARE
     dependency_count INTEGER DEFAULT 0;
     result_msg VARCHAR DEFAULT '';
     sql_cmd VARCHAR;
+    table_rs RESULTSET;
 
-    -- Cursor variables
-    table_cursor CURSOR FOR
+BEGIN
+    result_msg := 'Starting migration preparation...\n';
+
+    -- -------------------------------------------------------------------------
+    -- STEP 1: Create or replace share
+    -- -------------------------------------------------------------------------
+    sql_cmd := 'CREATE SHARE IF NOT EXISTS ' || :SHARE_NAME ||
+               ' COMMENT = ''Automated migration share: PROD_DB to target''';
+    EXECUTE IMMEDIATE :sql_cmd;
+    result_msg := result_msg || 'Share created: ' || :SHARE_NAME || '\n';
+
+    -- -------------------------------------------------------------------------
+    -- STEP 2: Grant database usage
+    -- -------------------------------------------------------------------------
+    sql_cmd := 'GRANT USAGE ON DATABASE PROD_DB TO SHARE ' || :SHARE_NAME;
+    EXECUTE IMMEDIATE :sql_cmd;
+    result_msg := result_msg || 'Granted database usage\n';
+
+    -- -------------------------------------------------------------------------
+    -- STEP 3: Grant schema usage for each schema
+    -- -------------------------------------------------------------------------
+    LET schema_rs RESULTSET := (SELECT TRIM(VALUE) AS schema_name
+                                 FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ',')));
+    FOR schema_rec IN schema_rs DO
+        sql_cmd := 'GRANT USAGE ON SCHEMA PROD_DB.' || schema_rec.schema_name ||
+                   ' TO SHARE ' || :SHARE_NAME;
+        EXECUTE IMMEDIATE :sql_cmd;
+        result_msg := result_msg || 'Granted schema usage: ' || schema_rec.schema_name || '\n';
+    END FOR;
+
+    -- -------------------------------------------------------------------------
+    -- STEP 4: Grant SELECT on all discovered tables
+    -- -------------------------------------------------------------------------
+    table_count := 0;
+
+    -- Build resultset for tables to share
+    table_rs := (
         WITH split_schemas AS (
             SELECT TRIM(VALUE) AS schema_name
             FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ','))
@@ -73,45 +109,10 @@ DECLARE
             REFERENCED_SCHEMA AS schema_name,
             REFERENCED_OBJECT_NAME AS table_name
         FROM all_dependencies
-        WHERE REFERENCED_OBJECT_DOMAIN = 'TABLE';
+        WHERE REFERENCED_OBJECT_DOMAIN = 'TABLE'
+    );
 
-BEGIN
-    result_msg := 'Starting migration preparation...\n';
-
-    -- -------------------------------------------------------------------------
-    -- STEP 1: Create or replace share
-    -- -------------------------------------------------------------------------
-    sql_cmd := 'CREATE SHARE IF NOT EXISTS ' || :SHARE_NAME ||
-               ' COMMENT = ''Automated migration share: PROD_DB to target''';
-    EXECUTE IMMEDIATE :sql_cmd;
-    result_msg := result_msg || 'Share created: ' || :SHARE_NAME || '\n';
-
-    -- -------------------------------------------------------------------------
-    -- STEP 2: Grant database usage
-    -- -------------------------------------------------------------------------
-    sql_cmd := 'GRANT USAGE ON DATABASE PROD_DB TO SHARE ' || :SHARE_NAME;
-    EXECUTE IMMEDIATE :sql_cmd;
-    result_msg := result_msg || 'Granted database usage\n';
-
-    -- -------------------------------------------------------------------------
-    -- STEP 3: Grant schema usage for each schema
-    -- -------------------------------------------------------------------------
-    LET schema_rs RESULTSET := (SELECT TRIM(VALUE) AS schema_name
-                                 FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ',')));
-    FOR schema_rec IN schema_rs DO
-        sql_cmd := 'GRANT USAGE ON SCHEMA PROD_DB.' || schema_rec.schema_name ||
-                   ' TO SHARE ' || :SHARE_NAME;
-        EXECUTE IMMEDIATE :sql_cmd;
-        result_msg := result_msg || 'Granted schema usage: ' || schema_rec.schema_name || '\n';
-    END FOR;
-
-    -- -------------------------------------------------------------------------
-    -- STEP 4: Grant SELECT on all discovered tables
-    -- -------------------------------------------------------------------------
-    table_count := 0;
-
-    OPEN table_cursor;
-    FOR table_rec IN table_cursor DO
+    FOR table_rec IN table_rs DO
         BEGIN
             sql_cmd := 'GRANT SELECT ON TABLE PROD_DB.' ||
                        table_rec.schema_name || '.' || table_rec.table_name ||
@@ -127,7 +128,6 @@ BEGIN
                               ' - ' || SQLERRM || '\n';
         END;
     END FOR;
-    CLOSE table_cursor;
 
     result_msg := result_msg || 'Total tables added to share: ' || table_count || '\n';
 
@@ -177,7 +177,9 @@ DECLARE
     res RESULTSET;
     table_query VARCHAR;
     view_query VARCHAR;
-    proc_query VARCHAR;
+    proc_list RESULTSET;
+    proc_query VARCHAR DEFAULT '';
+    ddl_text VARCHAR;
 BEGIN
     -- Build dynamic query for tables
     IF (:OBJECT_TYPES ILIKE '%TABLE%') THEN
@@ -210,20 +212,39 @@ BEGIN
         view_query := '';
     END IF;
 
-    -- Build dynamic query for procedures
+    -- Build dynamic query for procedures with error handling
     IF (:OBJECT_TYPES ILIKE '%PROCEDURE%') THEN
-        SELECT LISTAGG(
-            'SELECT ''' || procedure_schema || ''' AS object_schema, ' ||
-            '''' || procedure_name || ''' AS object_name, ' ||
-            '''PROCEDURE'' AS object_type, ' ||
-            'GET_DDL(''PROCEDURE'', ''PROD_DB.' || procedure_schema || '.' || procedure_name ||
-            '(' || COALESCE(argument_signature, '') || ')' || ''', TRUE) AS ddl_statement',
-            ' UNION ALL ')
-        INTO :proc_query
-        FROM PROD_DB.INFORMATION_SCHEMA.PROCEDURES
-        WHERE procedure_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_EXTRACT, ',')));
-    ELSE
-        proc_query := '';
+        proc_list := (
+            SELECT
+                procedure_schema,
+                procedure_name,
+                COALESCE(argument_signature, '()') AS arg_sig
+            FROM PROD_DB.INFORMATION_SCHEMA.PROCEDURES
+            WHERE procedure_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_EXTRACT, ',')))
+              AND procedure_name NOT LIKE '%$%'  -- Exclude system procedures
+        );
+
+        FOR proc_rec IN proc_list DO
+            BEGIN
+                -- Try to get DDL for this procedure
+                LET full_proc_name VARCHAR := 'PROD_DB.' || proc_rec.procedure_schema || '.' || proc_rec.procedure_name || proc_rec.arg_sig;
+                ddl_text := GET_DDL('PROCEDURE', full_proc_name, TRUE);
+
+                -- Build SELECT for this procedure
+                IF (proc_query != '') THEN
+                    proc_query := proc_query || ' UNION ALL ';
+                END IF;
+                proc_query := proc_query ||
+                    'SELECT ''' || proc_rec.procedure_schema || ''' AS object_schema, ' ||
+                    '''' || proc_rec.procedure_name || ''' AS object_name, ' ||
+                    '''PROCEDURE'' AS object_type, ' ||
+                    '''' || REPLACE(ddl_text, '''', '''''') || ''' AS ddl_statement';
+            EXCEPTION
+                WHEN OTHER THEN
+                    -- Skip procedures that can't be accessed
+                    CONTINUE;
+            END;
+        END FOR;
     END IF;
 
     -- Combine queries
