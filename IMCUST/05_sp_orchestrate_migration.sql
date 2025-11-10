@@ -20,16 +20,17 @@ RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 AS
 $$
-    // Insert migration request
+    // Insert migration request using INSERT ... SELECT to support PARSE_JSON
+    var jsonStr = JSON.stringify(P_OBJECT_LIST).replace(/'/g, "''");  // Escape single quotes
     var insert_config = `
         INSERT INTO migration_config
         (source_database, source_schema, target_database, target_schema, object_list, status)
-        VALUES (?, ?, ?, ?, PARSE_JSON(?), 'IN_PROGRESS')
+        SELECT ?, ?, ?, ?, PARSE_JSON('${jsonStr}'), 'IN_PROGRESS'
     `;
 
     var stmt = snowflake.createStatement({
         sqlText: insert_config,
-        binds: [P_SOURCE_DATABASE, P_SOURCE_SCHEMA, P_TARGET_DATABASE, P_TARGET_SCHEMA, JSON.stringify(P_OBJECT_LIST)]
+        binds: [P_SOURCE_DATABASE, P_SOURCE_SCHEMA, P_TARGET_DATABASE, P_TARGET_SCHEMA]
     });
     stmt.execute();
 

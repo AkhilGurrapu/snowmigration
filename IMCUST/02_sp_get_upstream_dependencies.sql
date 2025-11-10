@@ -12,7 +12,7 @@ CREATE OR REPLACE PROCEDURE sp_get_upstream_dependencies(
     p_migration_id FLOAT,
     p_database VARCHAR,
     p_schema VARCHAR,
-    p_object_list ARRAY
+    p_object_list_json VARCHAR  -- Changed to VARCHAR to accept JSON string
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
@@ -22,10 +22,13 @@ $$
     var processed_objects = new Set();
     var objects_to_process = [];
 
+    // Parse the JSON string to get the array
+    var object_list = JSON.parse(P_OBJECT_LIST_JSON);
+
     // Initialize with input objects
-    for (var i = 0; i < P_OBJECT_LIST.length; i++) {
+    for (var i = 0; i < object_list.length; i++) {
         objects_to_process.push({
-            name: P_OBJECT_LIST[i],
+            name: object_list[i],
             level: 0
         });
     }
