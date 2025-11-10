@@ -42,17 +42,17 @@ DECLARE
         ),
         all_dependencies AS (
             SELECT DISTINCT
-                od.referenced_database_name,
-                od.referenced_schema_name,
-                od.referenced_object_name,
-                od.referenced_object_domain
+                od.REFERENCED_DATABASE,
+                od.REFERENCED_SCHEMA,
+                od.REFERENCED_OBJECT_NAME,
+                od.REFERENCED_OBJECT_DOMAIN
             FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES od
-            WHERE od.referencing_database_name = 'PROD_DB'
-              AND od.referencing_schema_name IN (SELECT schema_name FROM split_schemas)
-              AND od.referencing_object_name IN (SELECT object_name FROM split_objects)
-              AND od.referenced_object_domain = 'TABLE'
-              AND od.referenced_database_name = 'PROD_DB'
-              AND od.referenced_schema_name IN (SELECT schema_name FROM split_schemas)
+            WHERE od.REFERENCING_DATABASE = 'PROD_DB'
+              AND od.REFERENCING_SCHEMA IN (SELECT schema_name FROM split_schemas)
+              AND od.REFERENCING_OBJECT_NAME IN (SELECT object_name FROM split_objects)
+              AND od.REFERENCED_OBJECT_DOMAIN = 'TABLE'
+              AND od.REFERENCED_DATABASE = 'PROD_DB'
+              AND od.REFERENCED_SCHEMA IN (SELECT schema_name FROM split_schemas)
 
             UNION
 
@@ -68,11 +68,11 @@ DECLARE
               AND t.table_name IN (SELECT object_name FROM split_objects)
         )
         SELECT
-            referenced_database_name AS db_name,
-            referenced_schema_name AS schema_name,
-            referenced_object_name AS table_name
+            REFERENCED_DATABASE AS db_name,
+            REFERENCED_SCHEMA AS schema_name,
+            REFERENCED_OBJECT_NAME AS table_name
         FROM all_dependencies
-        WHERE referenced_object_domain = 'TABLE';
+        WHERE REFERENCED_OBJECT_DOMAIN = 'TABLE';
 
     table_rec RECORD;
     sql_cmd VARCHAR;
@@ -259,62 +259,62 @@ BEGIN
         -- Upstream dependencies (what base objects depend ON)
         upstream_deps AS (
             SELECT DISTINCT
-                od.referenced_database_name AS database_name,
-                od.referenced_schema_name AS schema_name,
-                od.referenced_object_name AS object_name,
-                od.referenced_object_domain AS object_type,
+                od.REFERENCED_DATABASE AS database_name,
+                od.REFERENCED_SCHEMA AS schema_name,
+                od.REFERENCED_OBJECT_NAME AS object_name,
+                od.REFERENCED_OBJECT_DOMAIN AS object_type,
                 1 AS dependency_level
             FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES od
-            WHERE od.referencing_database_name = :SOURCE_DATABASE
-              AND od.referencing_schema_name IN (SELECT schema_name FROM split_schemas)
-              AND od.referencing_object_name IN (SELECT object_name FROM split_objects)
-              AND od.referenced_database_name = :SOURCE_DATABASE
+            WHERE od.REFERENCING_DATABASE = :SOURCE_DATABASE
+              AND od.REFERENCING_SCHEMA IN (SELECT schema_name FROM split_schemas)
+              AND od.REFERENCING_OBJECT_NAME IN (SELECT object_name FROM split_objects)
+              AND od.REFERENCED_DATABASE = :SOURCE_DATABASE
 
             UNION ALL
 
             SELECT DISTINCT
-                od.referenced_database_name,
-                od.referenced_schema_name,
-                od.referenced_object_name,
-                od.referenced_object_domain,
+                od.REFERENCED_DATABASE,
+                od.REFERENCED_SCHEMA,
+                od.REFERENCED_OBJECT_NAME,
+                od.REFERENCED_OBJECT_DOMAIN,
                 ud.dependency_level + 1
             FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES od
             INNER JOIN upstream_deps ud
-                ON od.referencing_database_name = ud.database_name
-                AND od.referencing_schema_name = ud.schema_name
-                AND od.referencing_object_name = ud.object_name
+                ON od.REFERENCING_DATABASE = ud.database_name
+                AND od.REFERENCING_SCHEMA = ud.schema_name
+                AND od.REFERENCING_OBJECT_NAME = ud.object_name
             WHERE ud.dependency_level < :MAX_DEPTH
-              AND od.referenced_database_name = :SOURCE_DATABASE
+              AND od.REFERENCED_DATABASE = :SOURCE_DATABASE
         ),
         -- Downstream dependencies (what depends ON base objects)
         downstream_deps AS (
             SELECT DISTINCT
-                od.referencing_database_name AS database_name,
-                od.referencing_schema_name AS schema_name,
-                od.referencing_object_name AS object_name,
-                od.referencing_object_domain AS object_type,
+                od.REFERENCING_DATABASE AS database_name,
+                od.REFERENCING_SCHEMA AS schema_name,
+                od.REFERENCING_OBJECT_NAME AS object_name,
+                od.REFERENCING_OBJECT_DOMAIN AS object_type,
                 1 AS dependency_level
             FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES od
-            WHERE od.referenced_database_name = :SOURCE_DATABASE
-              AND od.referenced_schema_name IN (SELECT schema_name FROM split_schemas)
-              AND od.referenced_object_name IN (SELECT object_name FROM split_objects)
-              AND od.referencing_database_name = :SOURCE_DATABASE
+            WHERE od.REFERENCED_DATABASE = :SOURCE_DATABASE
+              AND od.REFERENCED_SCHEMA IN (SELECT schema_name FROM split_schemas)
+              AND od.REFERENCED_OBJECT_NAME IN (SELECT object_name FROM split_objects)
+              AND od.REFERENCING_DATABASE = :SOURCE_DATABASE
 
             UNION ALL
 
             SELECT DISTINCT
-                od.referencing_database_name,
-                od.referencing_schema_name,
-                od.referencing_object_name,
-                od.referencing_object_domain,
+                od.REFERENCING_DATABASE,
+                od.REFERENCING_SCHEMA,
+                od.REFERENCING_OBJECT_NAME,
+                od.REFERENCING_OBJECT_DOMAIN,
                 dd.dependency_level + 1
             FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES od
             INNER JOIN downstream_deps dd
-                ON od.referenced_database_name = dd.database_name
-                AND od.referenced_schema_name = dd.schema_name
-                AND od.referenced_object_name = dd.object_name
+                ON od.REFERENCED_DATABASE = dd.database_name
+                AND od.REFERENCED_SCHEMA = dd.schema_name
+                AND od.REFERENCED_OBJECT_NAME = dd.object_name
             WHERE dd.dependency_level < :MAX_DEPTH
-              AND od.referencing_database_name = :SOURCE_DATABASE
+              AND od.REFERENCING_DATABASE = :SOURCE_DATABASE
         )
         SELECT
             'UPSTREAM' AS dependency_type,

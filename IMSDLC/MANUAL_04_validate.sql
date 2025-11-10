@@ -154,27 +154,27 @@ CALL DEV_DB.MART_INVESTMENTS_BOLT.SP_CALCULATE_DAILY_POSITIONS();
 
 -- Check dependencies exist in target
 SELECT
-    referencing_object_name,
-    referencing_object_domain,
-    referenced_object_name,
-    referenced_object_domain,
-    referenced_schema_name
+    REFERENCING_OBJECT_NAME,
+    REFERENCING_OBJECT_DOMAIN,
+    REFERENCED_OBJECT_NAME,
+    REFERENCED_OBJECT_DOMAIN,
+    REFERENCED_SCHEMA
 FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
-WHERE referencing_database_name = 'DEV_DB'
-  AND referencing_schema_name IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
-ORDER BY referencing_object_name;
+WHERE REFERENCING_DATABASE = 'DEV_DB'
+  AND REFERENCING_SCHEMA IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
+ORDER BY REFERENCING_OBJECT_NAME;
 
 -- Check for broken external dependencies
 SELECT DISTINCT
-    referencing_object_name,
-    referencing_object_domain,
-    referenced_database_name,
-    referenced_schema_name,
-    referenced_object_name
+    REFERENCING_OBJECT_NAME,
+    REFERENCING_OBJECT_DOMAIN,
+    REFERENCED_DATABASE,
+    REFERENCED_SCHEMA,
+    REFERENCED_OBJECT_NAME
 FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
-WHERE referencing_database_name = 'DEV_DB'
-  AND referencing_schema_name IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
-  AND referenced_database_name != 'DEV_DB';
+WHERE REFERENCING_DATABASE = 'DEV_DB'
+  AND REFERENCING_SCHEMA IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
+  AND REFERENCED_DATABASE != 'DEV_DB';
 
 -- Should return 0 rows (no external dependencies)
 
