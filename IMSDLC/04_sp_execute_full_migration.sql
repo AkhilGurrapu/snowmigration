@@ -11,6 +11,7 @@ USE SCHEMA mart_investments_bolt;
 CREATE OR REPLACE PROCEDURE sp_execute_full_migration(
     p_migration_id NUMBER,
     p_shared_database VARCHAR,
+    p_shared_schema VARCHAR,    -- e.g., 'mart_investments_bolt'
     p_validate_before_ctas BOOLEAN DEFAULT TRUE
 )
 RETURNS VARCHAR
@@ -39,14 +40,14 @@ BEGIN
 
     -- Step 2: Get counts from shared metadata - DDL scripts
     v_query := 'SELECT COUNT(*) as cnt FROM IDENTIFIER(?) WHERE migration_id = ?';
-    v_table_name := p_shared_database || '.mart_investments_bolt.migration_ddl_scripts';
+    v_table_name := p_shared_database || '.' || p_shared_schema || '.migration_ddl_scripts';
     v_count_result := (EXECUTE IMMEDIATE :v_query USING (v_table_name, p_migration_id));
     OPEN v_count_cursor;
     FETCH v_count_cursor INTO v_ddl_count;
     CLOSE v_count_cursor;
 
     -- Get counts from shared metadata - CTAS scripts
-    v_table_name := p_shared_database || '.mart_investments_bolt.migration_ctas_scripts';
+    v_table_name := p_shared_database || '.' || p_shared_schema || '.migration_ctas_scripts';
     v_count_result := (EXECUTE IMMEDIATE :v_query USING (v_table_name, p_migration_id));
     OPEN v_count_cursor;
     FETCH v_count_cursor INTO v_ctas_count;
@@ -56,13 +57,13 @@ BEGIN
                       :v_ctas_count || ' CTAS scripts for migration ' || :p_migration_id || '.' || CHR(10);
 
     -- Step 3: Execute DDL scripts
-    CALL sp_execute_target_ddl(:p_migration_id, :p_shared_database)
+    CALL sp_execute_target_ddl(:p_migration_id, :p_shared_database, :p_shared_schema)
         INTO :ddl_result;
 
     -- Step 4: Execute CTAS scripts
     validation_msg := validation_msg || 'Proceeding with CTAS data migration.' || CHR(10);
 
-    CALL sp_execute_target_ctas(:p_migration_id, :p_shared_database)
+    CALL sp_execute_target_ctas(:p_migration_id, :p_shared_database, :p_shared_schema)
         INTO :ctas_result;
 
     RETURN :validation_msg || :ddl_result || CHR(10) || :ctas_result;

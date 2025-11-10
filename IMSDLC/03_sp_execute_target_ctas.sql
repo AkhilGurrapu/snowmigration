@@ -10,7 +10,8 @@ USE SCHEMA mart_investments_bolt;
 
 CREATE OR REPLACE PROCEDURE sp_execute_target_ctas(
     p_migration_id NUMBER,
-    p_shared_database VARCHAR  -- e.g., 'shared_prod_db'
+    p_shared_database VARCHAR,  -- e.g., 'shared_prod_db'
+    p_shared_schema VARCHAR     -- e.g., 'mart_investments_bolt'
 )
 RETURNS VARCHAR
 LANGUAGE SQL
@@ -31,8 +32,8 @@ DECLARE
     v_end_time TIMESTAMP_LTZ;
     v_error_msg VARCHAR;
 BEGIN
-    -- Build table name
-    v_table_name := p_shared_database || '.mart_investments_bolt.migration_ctas_scripts';
+    -- Build table name dynamically using provided schema
+    v_table_name := p_shared_database || '.' || p_shared_schema || '.migration_ctas_scripts';
 
     -- Build dynamic query
     v_query := 'SELECT object_name, ctas_script, execution_order ' ||

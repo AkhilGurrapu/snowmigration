@@ -15,7 +15,8 @@ CALL sp_orchestrate_migration(
     'DEV_DB',                                     -- target database
     'MART_INVESTMENTS_BOLT',                      -- target schema
     ARRAY_CONSTRUCT('TABLE1', 'TABLE2', 'VIEW1'), -- objects to migrate (replace with your object names)
-    'MIGRATION_SHARE_001'                         -- share name
+    'MIGRATION_SHARE_001',                        -- share name
+    'IMSDLC'                                      -- target account identifier (e.g., 'IMSDLC', 'ORG123.ACCT456')
 );
 
 -- View migration status
@@ -64,3 +65,9 @@ ORDER BY object_name;
 
 -- Verify share was created
 SHOW SHARES LIKE 'MIGRATION_SHARE_001';
+
+-- Verify database role was created (format: <schema>_VIEWER)
+SHOW DATABASE ROLES IN DATABASE prod_db;
+
+-- Verify grants to share
+SHOW GRANTS TO SHARE MIGRATION_SHARE_001;

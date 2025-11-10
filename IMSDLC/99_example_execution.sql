@@ -27,9 +27,10 @@ ORDER BY migration_id DESC;
 -- Step 3: Execute complete migration (DDL + CTAS)
 -- Replace migration_id with the actual migration ID from source
 CALL dev_db.mart_investments_bolt.sp_execute_full_migration(
-    1,                      -- migration_id from source
-    'shared_prod_db',       -- shared database name
-    TRUE                    -- validate before CTAS
+    1,                          -- migration_id from source
+    'shared_prod_db',           -- shared database name
+    'mart_investments_bolt',    -- shared schema name
+    TRUE                        -- validate before CTAS
 );
 
 -- Step 4: Review execution results

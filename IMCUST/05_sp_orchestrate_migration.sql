@@ -14,7 +14,8 @@ CREATE OR REPLACE PROCEDURE sp_orchestrate_migration(
     p_target_database VARCHAR,
     p_target_schema VARCHAR,
     p_object_list ARRAY,
-    p_share_name VARCHAR
+    p_share_name VARCHAR,
+    p_target_account VARCHAR  -- Target Snowflake account identifier (e.g., 'IMSDLC', 'ORG123.ACCT456')
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
@@ -62,10 +63,10 @@ $$
     var scripts_message = scripts_result.getColumnValue(1);
 
     // Step 3: Setup data share with database role
-    var call_share = `CALL sp_setup_data_share(?, ?, ?, ?)`;
+    var call_share = `CALL sp_setup_data_share(?, ?, ?, ?, ?)`;
     stmt = snowflake.createStatement({
         sqlText: call_share,
-        binds: [migration_id, P_SOURCE_DATABASE, P_SHARE_NAME, 'IMSDLC']  // Target account
+        binds: [migration_id, P_SOURCE_DATABASE, P_SOURCE_SCHEMA, P_SHARE_NAME, P_TARGET_ACCOUNT]
     });
     var share_result = stmt.execute();
     share_result.next();

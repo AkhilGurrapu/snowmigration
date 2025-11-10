@@ -11,6 +11,7 @@ USE SCHEMA mart_investments_bolt;
 CREATE OR REPLACE PROCEDURE sp_setup_data_share(
     p_migration_id FLOAT,
     p_database VARCHAR,
+    p_schema VARCHAR,
     p_share_name VARCHAR,
     p_target_account VARCHAR
 )
@@ -18,7 +19,7 @@ RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 AS
 $$
-    var db_role_name = 'MIGRATION_' + P_MIGRATION_ID + '_ROLE';
+    var db_role_name = P_SCHEMA.toUpperCase() + '_VIEWER';
 
     // Step 1: Create database role with fully qualified name
     var create_role_sql = `CREATE DATABASE ROLE IF NOT EXISTS ${P_DATABASE}.${db_role_name}`;
@@ -77,7 +78,7 @@ $$
     ];
 
     for (var i = 0; i < metadata_tables.length; i++) {
-        var grant_meta = `GRANT SELECT ON TABLE ${P_DATABASE}.mart_investments_bolt.${metadata_tables[i]} TO DATABASE ROLE ${P_DATABASE}.${db_role_name}`;
+        var grant_meta = `GRANT SELECT ON TABLE ${P_DATABASE}.${P_SCHEMA}.${metadata_tables[i]} TO DATABASE ROLE ${P_DATABASE}.${db_role_name}`;
         stmt = snowflake.createStatement({sqlText: grant_meta});
         stmt.execute();
     }
