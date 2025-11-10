@@ -65,21 +65,21 @@ ORDER BY procedure_schema, procedure_name;
 WITH RECURSIVE upstream_deps AS (
     -- Anchor: Base objects
     SELECT DISTINCT
-        referencing_database_name,
-        referencing_schema_name,
-        referencing_object_name,
-        referencing_object_domain,
-        referenced_database_name,
-        referenced_schema_name,
-        referenced_object_name,
-        referenced_object_domain,
-        referencing_object_name AS start_object,
+        REFERENCING_DATABASE,
+        REFERENCING_SCHEMA,
+        REFERENCING_OBJECT_NAME,
+        REFERENCING_OBJECT_DOMAIN,
+        REFERENCED_DATABASE,
+        REFERENCED_SCHEMA,
+        REFERENCED_OBJECT_NAME,
+        REFERENCED_OBJECT_DOMAIN,
+        REFERENCING_OBJECT_NAME AS start_object,
         1 AS dependency_level,
-        referencing_object_name || ' -> ' || referenced_object_name AS dependency_path
+        REFERENCING_OBJECT_NAME || ' -> ' || REFERENCED_OBJECT_NAME AS dependency_path
     FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
-    WHERE referencing_database_name = 'PROD_DB'
-      AND referencing_schema_name IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
-      AND referencing_object_name IN (
+    WHERE REFERENCING_DATABASE = 'PROD_DB'
+      AND REFERENCING_SCHEMA IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
+      AND REFERENCING_OBJECT_NAME IN (
           'STOCK_METADATA_RAW', 'DIM_STOCKS', 'DIM_PORTFOLIOS',
           'FACT_TRANSACTIONS', 'FACT_DAILY_POSITIONS', 'VW_CURRENT_HOLDINGS',
           'SP_LOAD_DIM_STOCKS', 'SP_CALCULATE_DAILY_POSITIONS'
@@ -89,35 +89,35 @@ WITH RECURSIVE upstream_deps AS (
 
     -- Recursive: What those dependencies depend on
     SELECT DISTINCT
-        od.referencing_database_name,
-        od.referencing_schema_name,
-        od.referencing_object_name,
-        od.referencing_object_domain,
-        od.referenced_database_name,
-        od.referenced_schema_name,
-        od.referenced_object_name,
-        od.referenced_object_domain,
+        od.REFERENCING_DATABASE,
+        od.REFERENCING_SCHEMA,
+        od.REFERENCING_OBJECT_NAME,
+        od.REFERENCING_OBJECT_DOMAIN,
+        od.REFERENCED_DATABASE,
+        od.REFERENCED_SCHEMA,
+        od.REFERENCED_OBJECT_NAME,
+        od.REFERENCED_OBJECT_DOMAIN,
         ud.start_object,
         ud.dependency_level + 1,
-        ud.dependency_path || ' -> ' || od.referenced_object_name
+        ud.dependency_path || ' -> ' || od.REFERENCED_OBJECT_NAME
     FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES od
     INNER JOIN upstream_deps ud
-        ON od.referencing_database_name = ud.referenced_database_name
-        AND od.referencing_schema_name = ud.referenced_schema_name
-        AND od.referencing_object_name = ud.referenced_object_name
+        ON od.REFERENCING_DATABASE = ud.REFERENCED_DATABASE
+        AND od.REFERENCING_SCHEMA = ud.REFERENCED_SCHEMA
+        AND od.REFERENCING_OBJECT_NAME = ud.REFERENCED_OBJECT_NAME
     WHERE ud.dependency_level < 10
 )
 SELECT DISTINCT
     start_object,
-    referenced_database_name,
-    referenced_schema_name,
-    referenced_object_name,
-    referenced_object_domain,
+    REFERENCED_DATABASE,
+    REFERENCED_SCHEMA,
+    REFERENCED_OBJECT_NAME,
+    REFERENCED_OBJECT_DOMAIN,
     dependency_level,
     dependency_path
 FROM upstream_deps
-WHERE referenced_database_name = 'PROD_DB'
-ORDER BY start_object, dependency_level, referenced_object_name;
+WHERE REFERENCED_DATABASE = 'PROD_DB'
+ORDER BY start_object, dependency_level, REFERENCED_OBJECT_NAME;
 
 -- ----------------------------------------------------------------------------
 -- STEP 5: Recursive Downstream Dependencies (What depends ON base objects)
@@ -126,21 +126,21 @@ ORDER BY start_object, dependency_level, referenced_object_name;
 WITH RECURSIVE downstream_deps AS (
     -- Anchor: Objects that reference base objects
     SELECT DISTINCT
-        referencing_database_name,
-        referencing_schema_name,
-        referencing_object_name,
-        referencing_object_domain,
-        referenced_database_name,
-        referenced_schema_name,
-        referenced_object_name,
-        referenced_object_domain,
-        referenced_object_name AS start_object,
+        REFERENCING_DATABASE,
+        REFERENCING_SCHEMA,
+        REFERENCING_OBJECT_NAME,
+        REFERENCING_OBJECT_DOMAIN,
+        REFERENCED_DATABASE,
+        REFERENCED_SCHEMA,
+        REFERENCED_OBJECT_NAME,
+        REFERENCED_OBJECT_DOMAIN,
+        REFERENCED_OBJECT_NAME AS start_object,
         1 AS dependency_level,
-        referenced_object_name || ' <- ' || referencing_object_name AS dependency_path
+        REFERENCED_OBJECT_NAME || ' <- ' || REFERENCING_OBJECT_NAME AS dependency_path
     FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
-    WHERE referenced_database_name = 'PROD_DB'
-      AND referenced_schema_name IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
-      AND referenced_object_name IN (
+    WHERE REFERENCED_DATABASE = 'PROD_DB'
+      AND REFERENCED_SCHEMA IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
+      AND REFERENCED_OBJECT_NAME IN (
           'STOCK_METADATA_RAW', 'DIM_STOCKS', 'DIM_PORTFOLIOS',
           'FACT_TRANSACTIONS', 'FACT_DAILY_POSITIONS', 'VW_CURRENT_HOLDINGS',
           'SP_LOAD_DIM_STOCKS', 'SP_CALCULATE_DAILY_POSITIONS'
@@ -150,35 +150,35 @@ WITH RECURSIVE downstream_deps AS (
 
     -- Recursive: What depends on those
     SELECT DISTINCT
-        od.referencing_database_name,
-        od.referencing_schema_name,
-        od.referencing_object_name,
-        od.referencing_object_domain,
-        od.referenced_database_name,
-        od.referenced_schema_name,
-        od.referenced_object_name,
-        od.referenced_object_domain,
+        od.REFERENCING_DATABASE,
+        od.REFERENCING_SCHEMA,
+        od.REFERENCING_OBJECT_NAME,
+        od.REFERENCING_OBJECT_DOMAIN,
+        od.REFERENCED_DATABASE,
+        od.REFERENCED_SCHEMA,
+        od.REFERENCED_OBJECT_NAME,
+        od.REFERENCED_OBJECT_DOMAIN,
         dd.start_object,
         dd.dependency_level + 1,
-        dd.dependency_path || ' <- ' || od.referencing_object_name
+        dd.dependency_path || ' <- ' || od.REFERENCING_OBJECT_NAME
     FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES od
     INNER JOIN downstream_deps dd
-        ON od.referenced_database_name = dd.referencing_database_name
-        AND od.referenced_schema_name = dd.referencing_schema_name
-        AND od.referenced_object_name = dd.referencing_object_name
+        ON od.REFERENCED_DATABASE = dd.REFERENCING_DATABASE
+        AND od.REFERENCED_SCHEMA = dd.REFERENCING_SCHEMA
+        AND od.REFERENCED_OBJECT_NAME = dd.REFERENCING_OBJECT_NAME
     WHERE dd.dependency_level < 10
 )
 SELECT DISTINCT
     start_object,
-    referencing_database_name,
-    referencing_schema_name,
-    referencing_object_name,
-    referencing_object_domain,
+    REFERENCING_DATABASE,
+    REFERENCING_SCHEMA,
+    REFERENCING_OBJECT_NAME,
+    REFERENCING_OBJECT_DOMAIN,
     dependency_level,
     dependency_path
 FROM downstream_deps
-WHERE referencing_database_name = 'PROD_DB'
-ORDER BY start_object, dependency_level, referencing_object_name;
+WHERE REFERENCING_DATABASE = 'PROD_DB'
+ORDER BY start_object, dependency_level, REFERENCING_OBJECT_NAME;
 
 -- ----------------------------------------------------------------------------
 -- STEP 6: External Dependencies Warning
@@ -186,27 +186,27 @@ ORDER BY start_object, dependency_level, referencing_object_name;
 
 WITH all_refs AS (
     SELECT DISTINCT
-        referencing_object_name,
-        referencing_object_domain,
-        referenced_database_name,
-        referenced_schema_name,
-        referenced_object_name,
-        referenced_object_domain
+        REFERENCING_OBJECT_NAME,
+        REFERENCING_OBJECT_DOMAIN,
+        REFERENCED_DATABASE,
+        REFERENCED_SCHEMA,
+        REFERENCED_OBJECT_NAME,
+        REFERENCED_OBJECT_DOMAIN
     FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
-    WHERE referencing_database_name = 'PROD_DB'
-      AND referencing_schema_name IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
+    WHERE REFERENCING_DATABASE = 'PROD_DB'
+      AND REFERENCING_SCHEMA IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
 )
 SELECT
     'EXTERNAL DEPENDENCY WARNING' AS alert_type,
-    referencing_object_name,
-    referencing_object_domain,
-    referenced_database_name,
-    referenced_schema_name,
-    referenced_object_name,
-    referenced_object_domain
+    REFERENCING_OBJECT_NAME,
+    REFERENCING_OBJECT_DOMAIN,
+    REFERENCED_DATABASE,
+    REFERENCED_SCHEMA,
+    REFERENCED_OBJECT_NAME,
+    REFERENCED_OBJECT_DOMAIN
 FROM all_refs
-WHERE referenced_database_name != 'PROD_DB'
-   OR referenced_schema_name NOT IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT');
+WHERE REFERENCED_DATABASE != 'PROD_DB'
+   OR REFERENCED_SCHEMA NOT IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT');
 
 -- ----------------------------------------------------------------------------
 -- STEP 7: Complete Migration Object List
@@ -215,20 +215,20 @@ WHERE referenced_database_name != 'PROD_DB'
 WITH all_dependencies AS (
     -- Upstream dependencies
     SELECT DISTINCT
-        referenced_database_name AS database_name,
-        referenced_schema_name AS schema_name,
-        referenced_object_name AS object_name,
-        referenced_object_domain AS object_type,
+        REFERENCED_DATABASE AS database_name,
+        REFERENCED_SCHEMA AS schema_name,
+        REFERENCED_OBJECT_NAME AS object_name,
+        REFERENCED_OBJECT_DOMAIN AS object_type,
         0 AS priority
     FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
-    WHERE referencing_database_name = 'PROD_DB'
-      AND referencing_schema_name IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
-      AND referencing_object_name IN (
+    WHERE REFERENCING_DATABASE = 'PROD_DB'
+      AND REFERENCING_SCHEMA IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
+      AND REFERENCING_OBJECT_NAME IN (
           'STOCK_METADATA_RAW', 'DIM_STOCKS', 'DIM_PORTFOLIOS',
           'FACT_TRANSACTIONS', 'FACT_DAILY_POSITIONS', 'VW_CURRENT_HOLDINGS',
           'SP_LOAD_DIM_STOCKS', 'SP_CALCULATE_DAILY_POSITIONS'
       )
-      AND referenced_database_name = 'PROD_DB'
+      AND REFERENCED_DATABASE = 'PROD_DB'
 
     UNION
 
@@ -259,20 +259,20 @@ WITH all_dependencies AS (
 
     -- Downstream dependencies
     SELECT DISTINCT
-        referencing_database_name AS database_name,
-        referencing_schema_name AS schema_name,
-        referencing_object_name AS object_name,
-        referencing_object_domain AS object_type,
+        REFERENCING_DATABASE AS database_name,
+        REFERENCING_SCHEMA AS schema_name,
+        REFERENCING_OBJECT_NAME AS object_name,
+        REFERENCING_OBJECT_DOMAIN AS object_type,
         2 AS priority
     FROM SNOWFLAKE.ACCOUNT_USAGE.OBJECT_DEPENDENCIES
-    WHERE referenced_database_name = 'PROD_DB'
-      AND referenced_schema_name IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
-      AND referenced_object_name IN (
+    WHERE REFERENCED_DATABASE = 'PROD_DB'
+      AND REFERENCED_SCHEMA IN ('SRC_INVESTMENTS_BOLT', 'MART_INVESTMENTS_BOLT')
+      AND REFERENCED_OBJECT_NAME IN (
           'STOCK_METADATA_RAW', 'DIM_STOCKS', 'DIM_PORTFOLIOS',
           'FACT_TRANSACTIONS', 'FACT_DAILY_POSITIONS', 'VW_CURRENT_HOLDINGS',
           'SP_LOAD_DIM_STOCKS', 'SP_CALCULATE_DAILY_POSITIONS'
       )
-      AND referencing_database_name = 'PROD_DB'
+      AND REFERENCING_DATABASE = 'PROD_DB'
 )
 SELECT
     priority,
