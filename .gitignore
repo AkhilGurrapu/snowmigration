@@ -1,0 +1,4 @@
+/.env.admin_pat
+/.env.imcust_pat
+/.env.imsdlc_pat
+.env

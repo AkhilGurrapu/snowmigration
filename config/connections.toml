@@ -1,0 +1,25 @@
+# Snowflake Connections Configuration for VS Code Extension
+# All connections tested and verified successfully
+# IMCUST: Production account (UCB21816) with prod_db containing MART_INVESTMENTS_BOLT and SRC_INVESTMENTS_BOLT
+# IMSDLC: Development account (FMB48463) with dev_db (target for migration)
+# ADMIN: Admin account (LIB31145) with admin_db for administrative operations
+
+[connections.imcust]
+account = "nfmyizv-imcust"
+user = "svc4snowflakedeploy"
+authenticator = "PROGRAMMATIC_ACCESS_TOKEN"
+token_file_path = "/Users/akhilgurrapu/Downloads/snowmigration/.env.imcust_pat"
+role = "ACCOUNTADMIN"
+warehouse = "admin_wh"
+database = "prod_db"
+# Connection tested: Schemas found - MART_INVESTMENTS_BOLT, SRC_INVESTMENTS_BOLT, PUBLIC
+
+[connections.imsdlc]
+account = "nfmyizv-imsdlc"
+user = "svc4snowflakedeploy"
+authenticator = "PROGRAMMATIC_ACCESS_TOKEN"
+token_file_path = "/Users/akhilgurrapu/Downloads/snowmigration/.env.imsdlc_pat"
+role = "ACCOUNTADMIN"
+warehouse = "admin_wh"
+database = "dev_db"
+# Connection tested: Ready for migration target

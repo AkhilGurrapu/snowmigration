@@ -1,0 +1,18 @@
+# Snowflake Configuration for IMSDLC Account (Target/Dev Environment)
+account: nfmyizv-imsdlc
+user: svc4snowflakedeploy
+# PAT authentication - use password parameter with PAT token from environment variable IMSDLC_PAT
+role: ACCOUNTADMIN
+database: dev_db
+warehouse: admin_wh
+host: nfmyizv-imsdlc.snowflakecomputing.com
+
+# Connection parameters
+connection:
+  account: nfmyizv-imsdlc
+  user: svc4snowflakedeploy
+  role: ACCOUNTADMIN
+  database: dev_db
+  warehouse: admin_wh
+  # For Python connector, use: password=os.getenv('IMSDLC_PAT')
+

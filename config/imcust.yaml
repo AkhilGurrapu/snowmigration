@@ -1,0 +1,18 @@
+# Snowflake Configuration for IMCUST Account
+account: nfmyizv-imcust
+user: svc4snowflakedeploy
+# PAT authentication - use password parameter with PAT token from environment variable IMCUST_PAT
+role: ACCOUNTADMIN
+database: prod_db
+warehouse: admin_wh
+host: nfmyizv-imcust.snowflakecomputing.com
+
+# Connection parameters
+connection:
+  account: nfmyizv-imcust
+  user: svc4snowflakedeploy
+  role: ACCOUNTADMIN
+  database: prod_db
+  warehouse: admin_wh
+  # For Python connector, use: password=os.getenv('IMCUST_PAT')
+
