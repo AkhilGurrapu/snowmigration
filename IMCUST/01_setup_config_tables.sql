@@ -47,6 +47,7 @@ CREATE OR REPLACE TABLE migration_share_objects (
     object_name VARCHAR,
     object_type VARCHAR,
     fully_qualified_name VARCHAR,
+    dependency_level NUMBER,  -- Distance from GET_LINEAGE (0=requested object, 1+=dependencies)
     created_ts TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
 );
 

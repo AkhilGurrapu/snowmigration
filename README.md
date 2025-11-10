@@ -131,6 +131,7 @@ This will:
 ## Key Features
 
 ✅ **Automatic dependency resolution** using SNOWFLAKE.CORE.GET_LINEAGE
+✅ **Correct execution ordering** - DDL scripts execute based on DISTANCE field from GET_LINEAGE (deepest dependencies first)
 ✅ **Database name replacement** (prod_db → dev_db) while preserving schema names
 ✅ **Data sharing with database roles** (Snowflake best practice)
 ✅ **Complete automation** - single procedure call on each side

@@ -96,18 +96,26 @@ $$
         }
     }
 
-    // Store all dependencies
+    // Clear any existing records for this migration_id to ensure idempotency
+    var delete_sql = `DELETE FROM migration_share_objects WHERE migration_id = ?`;
+    var stmt = snowflake.createStatement({
+        sqlText: delete_sql,
+        binds: [P_MIGRATION_ID]
+    });
+    stmt.execute();
+
+    // Store all dependencies with dependency level from GET_LINEAGE distance
     var insert_count = 0;
     all_dependencies.forEach(function(dep_json) {
         var dep = JSON.parse(dep_json);
         var insert_sql = `
             INSERT INTO migration_share_objects
-            (migration_id, object_name, object_type, fully_qualified_name)
-            VALUES (?, ?, ?, ?)
+            (migration_id, object_name, object_type, fully_qualified_name, dependency_level)
+            VALUES (?, ?, ?, ?, ?)
         `;
         var stmt = snowflake.createStatement({
             sqlText: insert_sql,
-            binds: [P_MIGRATION_ID, dep.name, dep.type, dep.name]
+            binds: [P_MIGRATION_ID, dep.name, dep.type, dep.name, dep.level]
         });
         stmt.execute();
         insert_count++;
