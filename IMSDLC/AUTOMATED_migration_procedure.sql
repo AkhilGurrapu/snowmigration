@@ -56,23 +56,24 @@ DECLARE
     result_msg VARCHAR DEFAULT '';
     sql_cmd VARCHAR;
     where_clause VARCHAR;
-
-    table_cursor CURSOR FOR
-        SELECT
-            table_schema,
-            table_name
-        FROM IDENTIFIER(:SHARED_DATABASE || '.INFORMATION_SCHEMA.TABLES')
-        WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ',')))
-          AND table_type = 'BASE TABLE'
-        ORDER BY table_schema, table_name;
+    table_rs RESULTSET;
 
 BEGIN
     result_msg := 'Starting table creation from share...\n';
 
     where_clause := CASE WHEN :CREATE_DATA THEN '' ELSE 'WHERE 1=0' END;
 
-    OPEN table_cursor;
-    FOR table_rec IN table_cursor DO
+    -- Build dynamic query for table list
+    LET query_tables VARCHAR := 'SELECT table_schema, table_name ' ||
+                                 'FROM ' || :SHARED_DATABASE || '.INFORMATION_SCHEMA.TABLES ' ||
+                                 'WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(''' ||
+                                 :SCHEMAS_TO_MIGRATE || ''', '',''))) ' ||
+                                 'AND table_type = ''BASE TABLE'' ' ||
+                                 'ORDER BY table_schema, table_name';
+
+    table_rs := (EXECUTE IMMEDIATE :query_tables);
+
+    FOR table_rec IN table_rs DO
         BEGIN
             sql_cmd := 'CREATE OR REPLACE TABLE ' || :TARGET_DATABASE || '.' ||
                        table_rec.table_schema || '.' || table_rec.table_name ||
@@ -91,7 +92,6 @@ BEGIN
                               ': ' || SQLERRM || '\n';
         END;
     END FOR;
-    CLOSE table_cursor;
 
     result_msg := result_msg || '\nTotal tables created: ' || table_count || '\n';
 
@@ -124,21 +124,22 @@ DECLARE
     sql_cmd VARCHAR;
     row_count_result RESULTSET;
     rows_inserted INTEGER;
-
-    table_cursor CURSOR FOR
-        SELECT
-            table_schema,
-            table_name
-        FROM IDENTIFIER(:TARGET_DATABASE || '.INFORMATION_SCHEMA.TABLES')
-        WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(:SCHEMAS_TO_MIGRATE, ',')))
-          AND table_type = 'BASE TABLE'
-        ORDER BY table_schema, table_name;
+    table_rs RESULTSET;
 
 BEGIN
     result_msg := 'Starting data population from share...\n';
 
-    OPEN table_cursor;
-    FOR table_rec IN table_cursor DO
+    -- Build dynamic query for table list
+    LET query_tables VARCHAR := 'SELECT table_schema, table_name ' ||
+                                 'FROM ' || :TARGET_DATABASE || '.INFORMATION_SCHEMA.TABLES ' ||
+                                 'WHERE table_schema IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE(''' ||
+                                 :SCHEMAS_TO_MIGRATE || ''', '',''))) ' ||
+                                 'AND table_type = ''BASE TABLE'' ' ||
+                                 'ORDER BY table_schema, table_name';
+
+    table_rs := (EXECUTE IMMEDIATE :query_tables);
+
+    FOR table_rec IN table_rs DO
         BEGIN
             -- Truncate if requested
             IF (:TRUNCATE_BEFORE_LOAD) THEN
@@ -179,7 +180,6 @@ BEGIN
                               ': ' || SQLERRM || '\n';
         END;
     END FOR;
-    CLOSE table_cursor;
 
     result_msg := result_msg || '\n=== DATA POPULATION COMPLETE ===\n';
     result_msg := result_msg || 'Tables populated: ' || table_count || '\n';
