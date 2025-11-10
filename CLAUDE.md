@@ -41,7 +41,7 @@ You are an expert Snowflake migration architect specializing in snowflake cross-
     - SRC: stock_metadata_raw (1 table)
     - MART: dim_stocks, dim_portfolios, fact_transactions, fact_daily_positions (4 tables)
     - VIEW: vw_current_holdings (depends on multiple tables)
-    - PROCEDURES: sp_load_dim_stocks, sp_calculate_daily_positions (2 procedures with runtime logic)
+    - PROCEDURES: sp_load_dim_stocks, sp_calculate_daily_positions (2 procedures)
 - Status: Manually created (no IaC), fully operational production environment
 - Remember both the schemas and database, along with objects alreday exists above, in imcust
 
