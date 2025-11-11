@@ -19,7 +19,7 @@ LANGUAGE JAVASCRIPT
 EXECUTE AS OWNER
 AS
 $$
-    var db_role_name = P_SCHEMA.toUpperCase() + '_VIEWER';
+    var db_role_name = P_SCHEMA.toUpperCase() + '_MIGRATION_VIEWER';
 
     // Step 1: Create database role with fully qualified name
     var create_role_sql = `CREATE DATABASE ROLE IF NOT EXISTS ${P_DATABASE}.${db_role_name}`;
