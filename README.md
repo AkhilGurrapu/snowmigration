@@ -15,12 +15,11 @@ snowmigration/
 │   ├── 05_sp_orchestrate_migration.sql       # Main orchestrator procedure
 │   └── 99_example_execution.sql     # Example usage
 ├── IMSDLC/                          # Target account (IMSDLC) scripts
-│   ├── 01_setup_execution_log.sql   # Create execution log table
-│   ├── 02_sp_execute_target_ddl.sql # Execute DDL scripts
-│   ├── 03_sp_execute_target_ctas.sql        # Execute CTAS scripts
-│   ├── 04_sp_execute_full_migration.sql     # Main orchestrator procedure
-│   ├── 05_sp_validate_migration.sql         # Validation procedure
-│   └── 99_example_execution.sql     # Example usage
+│   ├── 01_setup_execution_log.sql   # Create execution log table (admin_schema)
+│   ├── 02_sp_execute_target_ddl_v2.sql # Execute DDL scripts
+│   ├── 03_sp_execute_target_ctas_v2.sql    # Execute CTAS scripts
+│   ├── 04_sp_execute_full_migration.sql    # Main orchestrator procedure
+│   └── 98_test_migration_execution.sql     # Test execution example
 ├── config/                          # Connection configurations
 │   ├── connections.toml             # VS Code Snowflake extension config
 │   ├── imcust.yaml                  # IMCUST connection config
@@ -40,13 +39,12 @@ snowmigration/
   - sp_setup_data_share
   - sp_orchestrate_migration
 
-### IMSDLC (Target Account) - ✅ All Scripts Validated
-- Execution log table created successfully
-- 4 stored procedures created successfully:
-  - sp_execute_target_ddl
-  - sp_execute_target_ctas
-  - sp_execute_full_migration
-  - sp_validate_migration
+### IMSDLC (Target Account) - ✅ All Scripts Validated (v2.0)
+- Execution log table created successfully in `admin_schema`
+- 3 stored procedures created successfully:
+  - sp_execute_target_ddl (with `p_target_database` and `p_admin_schema` parameters)
+  - sp_execute_target_ctas (with `p_target_database` and `p_admin_schema` parameters)
+  - sp_execute_full_migration (orchestrator with new parameters)
 
 ## How to Use
 
@@ -97,10 +95,9 @@ Execute scripts in order:
 ```bash
 # Connect to IMSDLC account
 snow sql --connection imsdlc --filename IMSDLC/01_setup_execution_log.sql
-snow sql --connection imsdlc --filename IMSDLC/02_sp_execute_target_ddl.sql
-snow sql --connection imsdlc --filename IMSDLC/03_sp_execute_target_ctas.sql
+snow sql --connection imsdlc --filename IMSDLC/02_sp_execute_target_ddl_v2.sql
+snow sql --connection imsdlc --filename IMSDLC/03_sp_execute_target_ctas_v2.sql
 snow sql --connection imsdlc --filename IMSDLC/04_sp_execute_full_migration.sql
-snow sql --connection imsdlc --filename IMSDLC/05_sp_validate_migration.sql
 ```
 
 ### Step 4: Execute Migration (IMSDLC)
@@ -114,10 +111,13 @@ FROM SHARE IMCUST.MIGRATION_SHARE_001;
 
 GRANT IMPORTED PRIVILEGES ON DATABASE shared_prod_db TO ROLE ACCOUNTADMIN;
 
--- Execute complete migration (DDL + CTAS)
-CALL dev_db.mart_investments_bolt.sp_execute_full_migration(
+-- Execute complete migration (DDL + CTAS) - v2.0 signature
+CALL dev_db.admin_schema.sp_execute_full_migration(
     1,                      -- migration_id from source
     'shared_prod_db',       -- shared database name
+    'ADMIN_SCHEMA',         -- admin schema in shared DB
+    'DEV_DB',              -- target database
+    'ADMIN_SCHEMA',        -- admin schema for execution log
     TRUE                    -- validate before CTAS
 );
 ```
@@ -341,32 +341,52 @@ CALL sp_execute_full_migration(...);
 ALTER WAREHOUSE MIGRATION_WH SUSPEND;
 ```
 
-## Recent Fixes
+## Version 2.0 Critical Improvements
 
-### Fix 1: Cross-Schema Dependencies (2025-11-10)
-- ✅ System now captures `SOURCE_OBJECT_SCHEMA` from GET_LINEAGE
+### Major Improvements (2025-11-11)
+
+#### 1. Critical Bug Fix: Cross-Schema Dependency Handling
+**Issue**: Original implementation used hardcoded `P_SCHEMA` for all dependencies, causing "object doesn't exist" errors.
+
+**Solution**:
+- ✅ Uses `SOURCE_OBJECT_SCHEMA` from GET_LINEAGE output (not hardcoded P_SCHEMA)
 - ✅ Objects created in correct target schemas (e.g., SRC_INVESTMENTS_BOLT → SRC_INVESTMENTS_BOLT)
 - ✅ CTAS scripts preserve schema mapping
 - ✅ Share grants include USAGE on all involved schemas
 
-### Fix 2: Requested Objects Always Included (2025-11-11)
-- ✅ Objects with zero dependencies are now included in migration
+#### 2. Code Simplification: Removed Unnecessary BFS Recursion
+**Discovery**: GET_LINEAGE returns ALL transitive dependencies in ONE call with DISTANCE column.
+
+**Solution**:
+- ✅ Removed manual BFS recursion logic
+- ✅ Code reduced from ~150 lines to ~80 lines (~47% reduction)
+- ✅ Improved performance (fewer GET_LINEAGE calls)
+- ✅ Simpler logic, easier to understand and maintain
+
+#### 3. Admin Schema Standardization (IMSDLC)
+- ✅ All IMSDLC procedures moved from `mart_investments_bolt` to `admin_schema`
+- ✅ Consistent schema structure across both accounts
+- ✅ Added `p_target_database` and `p_admin_schema` parameters
+- ✅ Parameterized schema references (no hardcoding)
+
+#### 4. Requested Objects Always Included
+- ✅ Objects with zero dependencies now included in migration
 - ✅ Requested objects explicitly added with `dependency_level = 0`
 - ✅ Automatic TABLE/VIEW type detection
 - ✅ Enhanced reporting shows breakdown of requested vs. dependent objects
 
-### Fix 3: Removed Misleading p_target_schema Parameter (2025-11-11)
+#### 5. Removed Misleading p_target_schema Parameter
 - ✅ Removed unused `p_target_schema` parameter from `sp_orchestrate_migration`
 - ✅ Schema mapping is **automatic** based on `SOURCE_OBJECT_SCHEMA` from GET_LINEAGE
 - ✅ Simplified API from 7 to 6 parameters
 - ✅ Database boundary enforced by GET_LINEAGE scope (cross-schema ✓, cross-database ✗)
 
-### Fix 4: Case-Insensitive VIEW Detection (2025-11-11)
-- ✅ Fixed VIEW detection in `sp_get_upstream_dependencies` to use `UPPER()` for INFORMATION_SCHEMA queries
-- ✅ VIEWs now correctly identified and skip CTAS generation
+#### 6. Case-Insensitive VIEW Detection
+- ✅ Fixed VIEW detection to use `UPPER()` for INFORMATION_SCHEMA queries
+- ✅ VIEWs now correctly identified regardless of name casing
 - ✅ Prevents incorrect TABLE classification for views with lowercase names
 
-**See [CROSS_SCHEMA_FIX_SUMMARY.md](CROSS_SCHEMA_FIX_SUMMARY.md) for complete details**
+**See [CLAUDE.md](CLAUDE.md) for complete v2.0 documentation**
 
 ## Future Enhancements
 

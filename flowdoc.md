@@ -113,15 +113,19 @@ CREATE DATABASE IF NOT EXISTS shared_prod_db
 FROM SHARE IMCUST.PROD_TO_DEV_SHARE;
 
 GRANT IMPORTED PRIVILEGES ON DATABASE shared_prod_db TO ROLE ACCOUNTADMIN;
-7b. Execute Full Migration
-CALL dev_db.mart_investments_bolt.sp_execute_full_migration(
+7b. Execute Full Migration (v2.0 signature)
+-- Note: Now uses admin_schema and includes additional parameters
+CALL dev_db.admin_schema.sp_execute_full_migration(
     101,                    -- Same migration_id from IMCUST!
     'shared_prod_db',       -- Shared database name
+    'ADMIN_SCHEMA',         -- Admin schema in shared DB
+    'DEV_DB',              -- Target database
+    'ADMIN_SCHEMA',        -- Admin schema for execution log
     TRUE                    -- Validate before CTAS
 );
-7c. migration_execution_log Table (Execution Tracking)
-Purpose: Logs every DDL/CTAS execution on IMSDLC
-SELECT * FROM dev_db.mart_investments_bolt.migration_execution_log 
+7c. migration_execution_log Table (Execution Tracking) - v2.0
+Purpose: Logs every DDL/CTAS execution on IMSDLC (now in admin_schema)
+SELECT * FROM dev_db.admin_schema.migration_execution_log
 WHERE migration_id = 101
 ORDER BY log_id;
 log_id	migration_id	execution_phase	object_name	script_type	status	error_message	execution_time_ms	executed_at

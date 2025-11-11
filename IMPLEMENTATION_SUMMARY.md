@@ -1,6 +1,13 @@
 # Snowflake Cross-Account Migration - Complete Implementation
 
-## Summary of Changes
+> **⚠️ DEPRECATED**: This document describes the v1.0 implementation. For current v2.0 documentation, see:
+> - **Main Documentation**: [CLAUDE.md](CLAUDE.md)
+> - **All v2.0 Changes**: [CROSS_SCHEMA_FIX_SUMMARY.md](CROSS_SCHEMA_FIX_SUMMARY.md)
+> - **Quick Reference**: [README.md](README.md)
+
+---
+
+## Summary of Changes (v1.0 - Obsolete)
 
 This document summarizes all changes made to remove hardcoded values from the migration automation system.
 

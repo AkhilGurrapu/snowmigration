@@ -1,3 +1,12 @@
+> **⚠️ HISTORICAL DOCUMENT**: This is the original planning document from early development. The actual implementation has evolved significantly beyond this initial plan. For current documentation, see:
+> - **Main Documentation**: [CLAUDE.md](CLAUDE.md)
+> - **Quick Reference**: [README.md](README.md)
+> - **v2.0 Changes**: [CROSS_SCHEMA_FIX_SUMMARY.md](CROSS_SCHEMA_FIX_SUMMARY.md)
+
+---
+
+# Original Planning Document (Historical Reference)
+
 Excellent plan! Your approach is **sound and follows Snowflake best practices**. Using database roles with data shares is the recommended pattern for granular access control. Let me provide you with a **complete automation solution** using stored procedures.[1][2]
 
 ## Solution Architecture Overview
