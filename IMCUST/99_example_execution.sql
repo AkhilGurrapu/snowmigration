@@ -9,11 +9,11 @@ USE DATABASE prod_db;
 USE SCHEMA mart_investments_bolt;
 
 -- Example: Execute migration for specific objects
+-- NOTE: Schema mapping is AUTOMATIC based on source schema from GET_LINEAGE
 CALL sp_orchestrate_migration(
     'PROD_DB',                                    -- source database
     'MART_INVESTMENTS_BOLT',                      -- source schema
     'DEV_DB',                                     -- target database
-    'MART_INVESTMENTS_BOLT',                      -- target schema
     ARRAY_CONSTRUCT('TABLE1', 'TABLE2', 'VIEW1'), -- objects to migrate (replace with your object names)
     'MIGRATION_SHARE_001',                        -- share name
     'IMSDLC'                                      -- target account identifier (e.g., 'IMSDLC', 'ORG123.ACCT456')

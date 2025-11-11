@@ -26,7 +26,7 @@ $$
     var insert_config = `
         INSERT INTO migration_config
         (source_database, source_schema, target_database, target_schema, object_list, status)
-        SELECT ?, ?, ?, NULL, PARSE_JSON('${jsonStr}'), 'IN_PROGRESS'
+        SELECT ?, ?, ?, null, PARSE_JSON('${jsonStr}'), 'IN_PROGRESS'
     `;
 
     var stmt = snowflake.createStatement({
@@ -58,7 +58,7 @@ $$
     var call_scripts = `CALL sp_generate_migration_scripts(?, ?, ?)`;
     stmt = snowflake.createStatement({
         sqlText: call_scripts,
-        binds: [migration_id, P_TARGET_DATABASE, NULL]  // NULL for unused target_schema
+        binds: [migration_id, P_TARGET_DATABASE, null]  // null for unused target_schema
     });
     var scripts_result = stmt.execute();
     scripts_result.next();

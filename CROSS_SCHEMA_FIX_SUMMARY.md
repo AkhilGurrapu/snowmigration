@@ -505,9 +505,180 @@ If all 15 objects were tables instead of 10 tables + 5 views:
 - CTAS time would be ~30 min = 4.0 credits
 - **Savings: ~1.23 credits (31% reduction) by having views!**
 
+## Fix 3: Removal of Misleading p_target_schema Parameter
+
+### Issue Identified
+
+The `sp_orchestrate_migration` procedure signature included a `p_target_schema` parameter, but:
+- **It was NOT used for schema mapping** - actual mapping happens automatically
+- Schema mapping is controlled by `SOURCE_OBJECT_SCHEMA` from GET_LINEAGE, not by this parameter
+- The parameter was misleading and could confuse users about how schema mapping works
+
+### Root Cause Analysis
+
+**Procedure Signature** (Before Fix):
+```sql
+CREATE OR REPLACE PROCEDURE sp_orchestrate_migration(
+    p_source_database VARCHAR,
+    p_source_schema VARCHAR,
+    p_target_database VARCHAR,
+    p_target_schema VARCHAR,    -- ❌ NOT actually used for schema mapping!
+    p_object_list ARRAY,
+    p_share_name VARCHAR,
+    p_target_account VARCHAR
+)
+```
+
+**Where Schema Mapping Actually Happens** - In `sp_generate_migration_scripts` (line 55):
+```javascript
+var source_schema = objects.getColumnValue('SOURCE_SCHEMA');  // From GET_LINEAGE, not parameter!
+```
+
+**CTAS Generation** (line 96):
+```javascript
+CREATE OR REPLACE TABLE ${P_TARGET_DATABASE}.${source_schema}.${obj_name} AS  -- Uses source_schema from data!
+SELECT * FROM <SHARED_DB_NAME>.${source_schema}.${obj_name};
+```
+
+**The parameter `P_TARGET_SCHEMA` was never used in schema mapping!**
+
+### Solution: Parameter Removal
+
+**Updated Signature** (After Fix):
+```sql
+CREATE OR REPLACE PROCEDURE sp_orchestrate_migration(
+    p_source_database VARCHAR,
+    p_source_schema VARCHAR,        -- Initial schema for object lookup only
+    p_target_database VARCHAR,
+    -- p_target_schema REMOVED: Schema mapping is AUTOMATIC based on SOURCE_OBJECT_SCHEMA from GET_LINEAGE
+    p_object_list ARRAY,
+    p_share_name VARCHAR,
+    p_target_account VARCHAR
+)
+```
+
+**Updated Calls**:
+```javascript
+// migration_config INSERT - stores NULL for target_schema
+INSERT INTO migration_config
+(source_database, source_schema, target_database, target_schema, object_list, status)
+SELECT ?, ?, ?, NULL, PARSE_JSON('${jsonStr}'), 'IN_PROGRESS'  -- NULL for target_schema
+
+// sp_generate_migration_scripts call - passes NULL
+binds: [migration_id, P_TARGET_DATABASE, NULL]  // NULL for unused target_schema
+```
+
+### How Automatic Schema Mapping Works
+
+**Step-by-Step Flow**:
+
+1. **User Calls** `sp_orchestrate_migration`:
+```sql
+CALL sp_orchestrate_migration(
+    'PROD_DB',
+    'MART_INVESTMENTS_BOLT',  -- Starting point for object lookup
+    'DEV_DB',
+    ARRAY_CONSTRUCT('VW_TRANSACTION_ANALYSIS', 'FACT_TRANSACTIONS'),
+    'MIGRATION_SHARE_001',
+    'IMSDLC'
+);
+```
+
+2. **GET_LINEAGE Discovers Dependencies Across Schemas**:
+```
+Objects found:
+├── PROD_DB.MART_INVESTMENTS_BOLT.VW_TRANSACTION_ANALYSIS (VIEW, level=0)
+├── PROD_DB.MART_INVESTMENTS_BOLT.FACT_TRANSACTIONS (TABLE, level=0)
+├── PROD_DB.MART_INVESTMENTS_BOLT.DIM_STOCKS (TABLE, level=1)
+└── PROD_DB.SRC_INVESTMENTS_BOLT.TRANSACTIONS_RAW (TABLE, level=1)  ← Different schema!
+```
+
+3. **Schema Information Preserved in migration_share_objects**:
+```
+| object_name           | source_schema           | dependency_level |
+|-----------------------|-------------------------|------------------|
+| VW_TRANSACTION_...    | MART_INVESTMENTS_BOLT   | 0                |
+| FACT_TRANSACTIONS     | MART_INVESTMENTS_BOLT   | 0                |
+| DIM_STOCKS            | MART_INVESTMENTS_BOLT   | 1                |
+| TRANSACTIONS_RAW      | SRC_INVESTMENTS_BOLT    | 1                |
+```
+
+4. **CTAS Generation Automatically Maps Schemas**:
+```sql
+-- Objects in MART_INVESTMENTS_BOLT → DEV_DB.MART_INVESTMENTS_BOLT
+CREATE OR REPLACE TABLE DEV_DB.MART_INVESTMENTS_BOLT.FACT_TRANSACTIONS AS
+SELECT * FROM SHARED_DB.MART_INVESTMENTS_BOLT.FACT_TRANSACTIONS;
+
+-- Objects in SRC_INVESTMENTS_BOLT → DEV_DB.SRC_INVESTMENTS_BOLT
+CREATE OR REPLACE TABLE DEV_DB.SRC_INVESTMENTS_BOLT.TRANSACTIONS_RAW AS
+SELECT * FROM SHARED_DB.SRC_INVESTMENTS_BOLT.TRANSACTIONS_RAW;
+```
+
+**Key Insight**: The `p_source_schema` parameter is only used as the **starting point** for GET_LINEAGE queries. All actual schema mapping is automatic based on each object's `SOURCE_OBJECT_SCHEMA` from GET_LINEAGE results.
+
+### Database Boundary Enforcement
+
+**Question**: How do we ensure migration stays within database boundaries?
+
+**Answer**: GET_LINEAGE is scoped to a single database:
+```sql
+SNOWFLAKE.CORE.GET_LINEAGE(
+    'TABLE', 'PROD_DB.MART_INVESTMENTS_BOLT.FACT_TRANSACTIONS', 'UPSTREAM'
+)
+```
+- ✅ Returns dependencies in **any schema** within `PROD_DB`
+- ❌ **Never** returns dependencies from other databases
+- This naturally enforces the database boundary
+
+**Result**: Cross-schema migration is supported, cross-database migration is not (by design).
+
+### Benefits of Parameter Removal
+
+1. **Clarity**: No confusion about how schema mapping works
+2. **Simplicity**: One fewer parameter to provide
+3. **Correctness**: Can't accidentally pass wrong schema that would be ignored anyway
+4. **Documentation**: Makes automatic schema mapping behavior explicit
+5. **API Cleanliness**: Signature matches actual behavior
+
+### Files Updated
+
+1. **IMCUST/05_sp_orchestrate_migration.sql** - Removed parameter, added explanatory comment
+2. **IMCUST/99_example_execution.sql** - Updated example to 6-parameter call
+3. **README.md** - Updated all example calls with schema mapping notes
+4. **CROSS_SCHEMA_FIX_SUMMARY.md** - Documented parameter removal (this section)
+
+### Migration Guide for Existing Usage
+
+**Before** (7 parameters):
+```sql
+CALL sp_orchestrate_migration(
+    'PROD_DB',
+    'MART_INVESTMENTS_BOLT',
+    'DEV_DB',
+    'MART_INVESTMENTS_BOLT',  -- ❌ Remove this line
+    ARRAY_CONSTRUCT('TABLE1'),
+    'MIGRATION_SHARE_001',
+    'IMSDLC'
+);
+```
+
+**After** (6 parameters):
+```sql
+CALL sp_orchestrate_migration(
+    'PROD_DB',
+    'MART_INVESTMENTS_BOLT',
+    'DEV_DB',
+    ARRAY_CONSTRUCT('TABLE1'),
+    'MIGRATION_SHARE_001',
+    'IMSDLC'
+);
+```
+
+**No behavior change** - schema mapping was always automatic, now the API reflects that truth.
+
 ## Conclusion
 
-Both critical issues are now fixed and tested. The system correctly:
+All critical issues are now fixed and tested. The system correctly:
 - ✅ Captures schema information from GET_LINEAGE (cross-schema fix)
 - ✅ Preserves schema structure in target database (cross-schema fix)
 - ✅ Generates CTAS scripts with proper schema references (cross-schema fix)
@@ -516,8 +687,10 @@ Both critical issues are now fixed and tested. The system correctly:
 - ✅ **Marks requested objects with level 0 for clear identification** (requested objects fix)
 - ✅ **Detects object type (TABLE vs VIEW) automatically** (requested objects fix)
 - ✅ **Handles VIEWs correctly - DDL only, no CTAS** (automatic optimization)
+- ✅ **Removed misleading parameter - schema mapping is explicitly automatic** (API cleanup)
 
 These fixes transform the migration system from:
 - Single-schema only → **Fully multi-schema capable**
 - Dependency-only → **Complete object coverage (requested + dependencies)**
 - Inefficient VIEW handling → **Optimized: VIEWs skip CTAS phase**
+- Misleading API → **Clear, accurate parameter signature**

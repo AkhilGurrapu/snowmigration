@@ -71,13 +71,14 @@ USE DATABASE prod_db;
 USE SCHEMA mart_investments_bolt;
 
 -- Run the migration orchestration
+-- NOTE: Schema mapping is AUTOMATIC based on source schema from GET_LINEAGE
 CALL sp_orchestrate_migration(
     'PROD_DB',                                    -- source database
     'MART_INVESTMENTS_BOLT',                      -- source schema
     'DEV_DB',                                     -- target database
-    'MART_INVESTMENTS_BOLT',                      -- target schema
     ARRAY_CONSTRUCT('TABLE1', 'TABLE2', 'VIEW1'), -- objects to migrate
-    'MIGRATION_SHARE_001'                         -- share name
+    'MIGRATION_SHARE_001',                        -- share name
+    'IMSDLC'                                      -- target account identifier
 );
 ```
 
@@ -216,11 +217,11 @@ WHERE migration_id = 1 AND status = 'FAILED';
 
 ```sql
 -- Request migration of a VIEW that depends on TABLEs
+-- Schema mapping is automatic - objects preserve their source schema structure
 CALL sp_orchestrate_migration(
     'PROD_DB',
     'MART_INVESTMENTS_BOLT',
     'DEV_DB',
-    'MART_INVESTMENTS_BOLT',
     ARRAY_CONSTRUCT('VW_TRANSACTION_ANALYSIS'),  -- This is a VIEW
     'MIGRATION_SHARE_001',
     'IMSDLC'
@@ -353,6 +354,12 @@ ALTER WAREHOUSE MIGRATION_WH SUSPEND;
 - ✅ Requested objects explicitly added with `dependency_level = 0`
 - ✅ Automatic TABLE/VIEW type detection
 - ✅ Enhanced reporting shows breakdown of requested vs. dependent objects
+
+### Fix 3: Removed Misleading p_target_schema Parameter (2025-11-11)
+- ✅ Removed unused `p_target_schema` parameter from `sp_orchestrate_migration`
+- ✅ Schema mapping is **automatic** based on `SOURCE_OBJECT_SCHEMA` from GET_LINEAGE
+- ✅ Simplified API from 7 to 6 parameters
+- ✅ Database boundary enforced by GET_LINEAGE scope (cross-schema ✓, cross-database ✗)
 
 **See [CROSS_SCHEMA_FIX_SUMMARY.md](CROSS_SCHEMA_FIX_SUMMARY.md) for complete details**
 
