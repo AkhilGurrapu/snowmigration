@@ -5,12 +5,13 @@
 -- This is the main procedure you call to start a migration
 
 USE ROLE ACCOUNTADMIN;
-USE DATABASE prod_db;
-USE SCHEMA mart_investments_bolt;
+USE DATABASE PROD_DB;
+USE SCHEMA ADMIN_SCHEMA;
 
-CREATE OR REPLACE PROCEDURE sp_orchestrate_migration(
+CREATE OR REPLACE PROCEDURE PROD_DB.ADMIN_SCHEMA.sp_orchestrate_migration(
     p_source_database VARCHAR,
     p_source_schema VARCHAR,        -- Initial schema for object lookup only
+    p_admin_schema VARCHAR,         -- Schema where metadata tables are stored
     p_target_database VARCHAR,
     -- p_target_schema REMOVED: Schema mapping is AUTOMATIC based on SOURCE_OBJECT_SCHEMA from GET_LINEAGE
     p_object_list ARRAY,
@@ -19,12 +20,13 @@ CREATE OR REPLACE PROCEDURE sp_orchestrate_migration(
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
+EXECUTE AS OWNER
 AS
 $$
     // Insert migration request using INSERT ... SELECT to support PARSE_JSON
     var jsonStr = JSON.stringify(P_OBJECT_LIST).replace(/'/g, "''");  // Escape single quotes
     var insert_config = `
-        INSERT INTO migration_config
+        INSERT INTO ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.migration_config
         (source_database, source_schema, target_database, target_schema, object_list, status)
         SELECT ?, ?, ?, null, PARSE_JSON('${jsonStr}'), 'IN_PROGRESS'
     `;
@@ -36,14 +38,14 @@ $$
     stmt.execute();
 
     // Get migration_id
-    var get_id = `SELECT MAX(migration_id) as mid FROM migration_config`;
+    var get_id = `SELECT MAX(migration_id) as mid FROM ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.migration_config`;
     stmt = snowflake.createStatement({sqlText: get_id});
     var result = stmt.execute();
     result.next();
     var migration_id = result.getColumnValue('MID');
 
     // Step 1: Get all upstream dependencies
-    var call_deps = `CALL sp_get_upstream_dependencies(?, ?, ?, ?)`;
+    var call_deps = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_get_upstream_dependencies(?, ?, ?, ?)`;
     stmt = snowflake.createStatement({
         sqlText: call_deps,
         binds: [migration_id, P_SOURCE_DATABASE, P_SOURCE_SCHEMA, JSON.stringify(P_OBJECT_LIST)]
@@ -55,7 +57,7 @@ $$
     // Step 2: Generate migration scripts (DDL + CTAS)
     // Note: p_target_schema parameter exists but is NOT used for schema mapping
     // Schema mapping is automatic based on source_schema from migration_share_objects
-    var call_scripts = `CALL sp_generate_migration_scripts(?, ?, ?)`;
+    var call_scripts = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_generate_migration_scripts(?, ?, ?)`;
     stmt = snowflake.createStatement({
         sqlText: call_scripts,
         binds: [migration_id, P_TARGET_DATABASE, null]  // null for unused target_schema
@@ -65,17 +67,17 @@ $$
     var scripts_message = scripts_result.getColumnValue(1);
 
     // Step 3: Setup data share with database role
-    var call_share = `CALL sp_setup_data_share(?, ?, ?, ?, ?)`;
+    var call_share = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_setup_data_share(?, ?, ?, ?, ?, ?)`;
     stmt = snowflake.createStatement({
         sqlText: call_share,
-        binds: [migration_id, P_SOURCE_DATABASE, P_SOURCE_SCHEMA, P_SHARE_NAME, P_TARGET_ACCOUNT]
+        binds: [migration_id, P_SOURCE_DATABASE, P_SOURCE_SCHEMA, P_ADMIN_SCHEMA, P_SHARE_NAME, P_TARGET_ACCOUNT]
     });
     var share_result = stmt.execute();
     share_result.next();
     var share_message = share_result.getColumnValue(1);
 
     // Update status
-    var update_status = `UPDATE migration_config SET status = 'COMPLETED' WHERE migration_id = ?`;
+    var update_status = `UPDATE ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.migration_config SET status = 'COMPLETED' WHERE migration_id = ?`;
     stmt = snowflake.createStatement({
         sqlText: update_status,
         binds: [migration_id]

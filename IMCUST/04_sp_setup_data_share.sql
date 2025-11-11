@@ -5,18 +5,18 @@
 -- This follows Snowflake best practices for data sharing
 
 USE ROLE ACCOUNTADMIN;
-USE DATABASE prod_db;
-USE SCHEMA mart_investments_bolt;
 
-CREATE OR REPLACE PROCEDURE sp_setup_data_share(
+CREATE OR REPLACE PROCEDURE PROD_DB.ADMIN_SCHEMA.sp_setup_data_share(
     p_migration_id FLOAT,
     p_database VARCHAR,
     p_schema VARCHAR,
+    p_admin_schema VARCHAR,  -- Schema where metadata tables are stored
     p_share_name VARCHAR,
     p_target_account VARCHAR
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
+EXECUTE AS OWNER
 AS
 $$
     var db_role_name = P_SCHEMA.toUpperCase() + '_VIEWER';
@@ -68,6 +68,11 @@ $$
         stmt = snowflake.createStatement({sqlText: grant_usage});
         stmt.execute();
     });
+    
+    // Grant USAGE ON SCHEMA (admin schema) TO DATABASE ROLE
+    var grant_usage_on_admin_schema = `GRANT USAGE ON SCHEMA ${P_DATABASE}.${P_ADMIN_SCHEMA} TO DATABASE ROLE ${P_DATABASE}.${db_role_name}`;
+    stmt = snowflake.createStatement({sqlText: grant_usage_on_admin_schema});
+    stmt.execute();
 
     // Grant SELECT on migration metadata tables to the database role
     var metadata_tables = [
@@ -78,7 +83,7 @@ $$
     ];
 
     for (var i = 0; i < metadata_tables.length; i++) {
-        var grant_meta = `GRANT SELECT ON TABLE ${P_DATABASE}.${P_SCHEMA}.${metadata_tables[i]} TO DATABASE ROLE ${P_DATABASE}.${db_role_name}`;
+        var grant_meta = `GRANT SELECT ON TABLE ${P_DATABASE}.${P_ADMIN_SCHEMA}.${metadata_tables[i]} TO DATABASE ROLE ${P_DATABASE}.${db_role_name}`;
         stmt = snowflake.createStatement({sqlText: grant_meta});
         stmt.execute();
     }
@@ -88,9 +93,19 @@ $$
     stmt = snowflake.createStatement({sqlText: create_share_sql});
     stmt.execute();
 
+    // Step 4a: Allow non-secure views in share
+    var alter_share_sql = `ALTER SHARE ${P_SHARE_NAME} SET secure_objects_only = false`;
+    stmt = snowflake.createStatement({sqlText: alter_share_sql});
+    stmt.execute();
+
     // Step 5: Grant database usage to share
     var grant_db = `GRANT USAGE ON DATABASE ${P_DATABASE} TO SHARE ${P_SHARE_NAME}`;
     stmt = snowflake.createStatement({sqlText: grant_db});
+    stmt.execute();
+
+    // Step 5a: Grant USAGE on admin schema to SHARE (so target account can access metadata)
+    var grant_admin_schema_to_share = `GRANT USAGE ON SCHEMA ${P_DATABASE}.${P_ADMIN_SCHEMA} TO SHARE ${P_SHARE_NAME}`;
+    stmt = snowflake.createStatement({sqlText: grant_admin_schema_to_share});
     stmt.execute();
 
     // Step 6: Grant database role to share - use fully qualified database role name
@@ -99,7 +114,7 @@ $$
     stmt.execute();
 
     // Step 7: Add target account to share
-    var add_account = `ALTER SHARE ${P_SHARE_NAME} ADD ACCOUNTS = ${P_TARGET_ACCOUNT}`;
+    var add_account = `ALTER SHARE ${P_SHARE_NAME} ADD ACCOUNTS = NFMYIZV.${P_TARGET_ACCOUNT}`;
     try {
         stmt = snowflake.createStatement({sqlText: add_account});
         stmt.execute();

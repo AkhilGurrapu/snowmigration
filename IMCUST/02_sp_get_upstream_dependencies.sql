@@ -5,10 +5,10 @@
 -- This procedure recursively discovers all objects that the target objects depend on
 
 USE ROLE ACCOUNTADMIN;
-USE DATABASE prod_db;
-USE SCHEMA mart_investments_bolt;
+USE DATABASE PROD_DB;
+USE SCHEMA ADMIN_SCHEMA;
 
-CREATE OR REPLACE PROCEDURE sp_get_upstream_dependencies(
+CREATE OR REPLACE PROCEDURE PROD_DB.ADMIN_SCHEMA.sp_get_upstream_dependencies(
     p_migration_id FLOAT,
     p_database VARCHAR,
     p_schema VARCHAR,
@@ -16,6 +16,7 @@ CREATE OR REPLACE PROCEDURE sp_get_upstream_dependencies(
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
+EXECUTE AS OWNER
 AS
 $$
     var all_dependencies = new Set();

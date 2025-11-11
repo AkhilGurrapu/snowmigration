@@ -14,14 +14,14 @@ FROM SHARE IMCUST.MIGRATION_SHARE_001;
 -- Grant privileges to ACCOUNTADMIN role
 GRANT IMPORTED PRIVILEGES ON DATABASE shared_prod_db TO ROLE ACCOUNTADMIN;
 
--- Step 2: Verify you can see the migration metadata
+-- Step 2: Verify you can see the migration metadata (stored in ADMIN_SCHEMA)
 SELECT
     migration_id,
     source_database,
     target_database,
     status,
     created_ts
-FROM shared_prod_db.mart_investments_bolt.migration_config
+FROM shared_prod_db.ADMIN_SCHEMA.migration_config
 ORDER BY migration_id DESC;
 
 -- Step 3: Execute complete migration (DDL + CTAS)
@@ -29,7 +29,7 @@ ORDER BY migration_id DESC;
 CALL dev_db.mart_investments_bolt.sp_execute_full_migration(
     1,                          -- migration_id from source
     'shared_prod_db',           -- shared database name
-    'mart_investments_bolt',    -- shared schema name
+    'ADMIN_SCHEMA',             -- shared schema name where metadata tables are stored
     TRUE                        -- validate before CTAS
 );
 
@@ -74,9 +74,18 @@ ORDER BY log_id;
 -- Optional: Generate row count validation queries
 SELECT
     'SELECT ''' || object_name || ''' as table_name, ' ||
-    '(SELECT COUNT(*) FROM shared_prod_db.mart_investments_bolt.' || object_name || ') as source_count, ' ||
-    '(SELECT COUNT(*) FROM dev_db.mart_investments_bolt.' || object_name || ') as target_count;'
+    'source_schema, ' ||
+    '(SELECT COUNT(*) FROM shared_prod_db.' || source_schema || '.' || object_name || ') as source_count, ' ||
+    '(SELECT COUNT(*) FROM dev_db.' || source_schema || '.' || object_name || ') as target_count;'
     as validation_query
-FROM shared_prod_db.mart_investments_bolt.migration_ctas_scripts
+FROM shared_prod_db.ADMIN_SCHEMA.migration_ctas_scripts
 WHERE migration_id = 1  -- Replace with your migration_id
 ORDER BY execution_order;
+
+
+export SNOWFLAKE_PASSWORD=$(cat .env.imsdlc_pat) && snow sql -f IMSDLC/01_setup_execution_log.sql -c imsdlc
+
+export SNOWFLAKE_PASSWORD=$(cat .env.imsdlc_pat) && snow sql -q "CREATE DATABASE IF NOT EXISTS IMCUST_SHARED_DB FROM SHARE NFMYIZV.IMCUST.IMCUST_TO_IMSDLC_SHARE;" -c imsdlc
+
+(base) akhilgurrapu@Mac snowmigration % export SNOWFLAKE_PASSWORD=$(cat .env.imsdlc_pat) && snow sql -q "CALL dev_db.ADMIN_SCHEMA.sp_execute_full_migration(1, 'IMCUST_SHARED_DB', 'ADMIN_SCHEMA', 'DEV_DB', 'ADMIN_SCHEMA');" -c imsdlc 
+CALL dev_db.ADMIN_SCHEMA.sp_execute_full_migration(1, 'IMCUST_SHARED_DB', 'ADMIN_SCHEMA', 'DEV_DB', 'ADMIN_SCHEMA');

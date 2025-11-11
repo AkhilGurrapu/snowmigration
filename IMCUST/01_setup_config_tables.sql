@@ -5,11 +5,9 @@
 -- Run this first to set up the infrastructure
 
 USE ROLE ACCOUNTADMIN;
-USE DATABASE prod_db;
-USE SCHEMA mart_investments_bolt;
 
 -- Table to store migration requests and track status
-CREATE OR REPLACE TABLE migration_config (
+CREATE OR REPLACE TABLE PROD_DB.ADMIN_SCHEMA.migration_config (
     migration_id NUMBER AUTOINCREMENT,
     source_database VARCHAR,
     source_schema VARCHAR,
@@ -22,7 +20,7 @@ CREATE OR REPLACE TABLE migration_config (
 );
 
 -- Table to store DDL scripts for each object
-CREATE OR REPLACE TABLE migration_ddl_scripts (
+CREATE OR REPLACE TABLE PROD_DB.ADMIN_SCHEMA.migration_ddl_scripts (
     migration_id NUMBER,
     source_database VARCHAR,
     source_schema VARCHAR,
@@ -35,7 +33,7 @@ CREATE OR REPLACE TABLE migration_ddl_scripts (
 );
 
 -- Table to store CTAS scripts for data migration
-CREATE OR REPLACE TABLE migration_ctas_scripts (
+CREATE OR REPLACE TABLE PROD_DB.ADMIN_SCHEMA.migration_ctas_scripts (
     migration_id NUMBER,
     source_database VARCHAR,
     source_schema VARCHAR,
@@ -46,7 +44,7 @@ CREATE OR REPLACE TABLE migration_ctas_scripts (
 );
 
 -- Table to store dependency objects that need to be shared
-CREATE OR REPLACE TABLE migration_share_objects (
+CREATE OR REPLACE TABLE PROD_DB.ADMIN_SCHEMA.migration_share_objects (
     migration_id NUMBER,
     source_database VARCHAR,
     source_schema VARCHAR,
@@ -58,4 +56,4 @@ CREATE OR REPLACE TABLE migration_share_objects (
 );
 
 -- Verify tables created
-SHOW TABLES LIKE 'migration_%';
+SHOW TABLES LIKE 'migration_%' in schema PROD_DB.ADMIN_SCHEMA;

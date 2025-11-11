@@ -5,16 +5,17 @@
 -- Replaces source database name with target database name
 
 USE ROLE ACCOUNTADMIN;
-USE DATABASE prod_db;
-USE SCHEMA mart_investments_bolt;
+USE DATABASE PROD_DB;
+USE SCHEMA ADMIN_SCHEMA;
 
-CREATE OR REPLACE PROCEDURE sp_generate_migration_scripts(
+CREATE OR REPLACE PROCEDURE PROD_DB.ADMIN_SCHEMA.sp_generate_migration_scripts(
     p_migration_id FLOAT,
     p_target_database VARCHAR,
     p_target_schema VARCHAR
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
+EXECUTE AS OWNER
 AS
 $$
     // Get all objects to migrate (dependencies + original objects)

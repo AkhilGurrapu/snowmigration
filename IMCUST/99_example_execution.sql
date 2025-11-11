@@ -5,12 +5,10 @@
 -- Modify the parameters according to your needs
 
 USE ROLE ACCOUNTADMIN;
-USE DATABASE prod_db;
-USE SCHEMA mart_investments_bolt;
 
 -- Example: Execute migration for specific objects
 -- NOTE: Schema mapping is AUTOMATIC based on source schema from GET_LINEAGE
-CALL sp_orchestrate_migration(
+CALL PROD_DB.ADMIN_SCHEMA.sp_orchestrate_migration(
     'PROD_DB',                                    -- source database
     'MART_INVESTMENTS_BOLT',                      -- source schema
     'DEV_DB',                                     -- target database
@@ -29,7 +27,7 @@ SELECT
     object_list,
     status,
     created_ts
-FROM migration_config
+FROM PROD_DB.ADMIN_SCHEMA.migration_config
 ORDER BY migration_id DESC;
 
 -- View generated DDL scripts
@@ -39,7 +37,7 @@ SELECT
     object_type,
     dependency_level,
     target_ddl
-FROM migration_ddl_scripts
+FROM PROD_DB.ADMIN_SCHEMA.migration_ddl_scripts
 WHERE migration_id = 1  -- Replace with your migration_id
 ORDER BY dependency_level, object_name;
 
@@ -49,7 +47,7 @@ SELECT
     object_name,
     ctas_script,
     execution_order
-FROM migration_ctas_scripts
+FROM PROD_DB.ADMIN_SCHEMA.migration_ctas_scripts
 WHERE migration_id = 1  -- Replace with your migration_id
 ORDER BY execution_order;
 
@@ -59,7 +57,7 @@ SELECT
     object_name,
     object_type,
     fully_qualified_name
-FROM migration_share_objects
+FROM PROD_DB.ADMIN_SCHEMA.migration_share_objects
 WHERE migration_id = 1  -- Replace with your migration_id
 ORDER BY object_name;
 
@@ -71,3 +69,17 @@ SHOW DATABASE ROLES IN DATABASE prod_db;
 
 -- Verify grants to share
 SHOW GRANTS TO SHARE MIGRATION_SHARE_001;
+
+
+export SNOWFLAKE_PASSWORD=$(cat .env.imcust_pat) && snow sql -q "CALL PROD_DB.ADMIN_SCHEMA.sp_orchestrate_migration(
+    'PROD_DB',
+    'MART_INVESTMENTS_BOLT',
+    'ADMIN_SCHEMA',
+    'DEV_DB',
+    ARRAY_CONSTRUCT('dim_stocks', 'fact_transactions', 'vw_transaction_analysis'),
+    'IMCUST_TO_IMSDLC_SHARE',
+    'IMSDLC'
+);" -c imcust
+
+
+export SNOWFLAKE_PASSWORD=$(cat .env.imcust_pat) && snow sql -q "SELECT object_name, object_type, dependency_level FROM PROD_DB.ADMIN_SCHEMA.migration_ddl_scripts WHERE migration_id = 2 ORDER BY dependency_level DESC, object_name;" -c imcust

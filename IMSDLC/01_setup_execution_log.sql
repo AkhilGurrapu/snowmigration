@@ -5,11 +5,9 @@
 -- Run this first to set up the infrastructure
 
 USE ROLE ACCOUNTADMIN;
-CREATE DATABASE IF NOT EXISTS dev_db;
-CREATE SCHEMA IF NOT EXISTS dev_db.mart_investments_bolt;
 
 USE DATABASE dev_db;
-USE SCHEMA mart_investments_bolt;
+USE SCHEMA admin_schema;
 
 -- Create execution log table to track DDL and CTAS execution
 CREATE OR REPLACE TABLE migration_execution_log (
