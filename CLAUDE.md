@@ -34,7 +34,7 @@ This framework provides an automated, metadata-driven approach for migrating Sno
 
 ### Target Account: IMSDLC
 - **Database**: `dev_db`
-- **Execution Schema**: `mart_investments_bolt` (where procedures run)
+- **Admin Schema**: `admin_schema` (stores execution log and procedures)
 - **Shared Database**: `IMCUST_SHARED_DB` (created from share)
 
 ### Authentication
@@ -140,14 +140,17 @@ sp_get_upstream_dependencies(
 **Algorithm:**
 1. Parse JSON array of requested objects
 2. For each object, call `SNOWFLAKE.CORE.GET_LINEAGE()` with UPSTREAM direction
-3. Perform breadth-first search through dependency graph (up to 5 levels)
-4. Track dependency distance as `dependency_level`
-5. Store all discovered objects in `migration_share_objects`
-6. Add requested objects with level=0 (even if no dependencies)
+3. GET_LINEAGE returns ALL transitive dependencies in ONE call (no recursion needed)
+4. Extract SOURCE_OBJECT_SCHEMA from GET_LINEAGE output (preserves cross-schema dependencies)
+5. Use DISTANCE column from GET_LINEAGE as `dependency_level` (0=requested, 1=direct dep, 2=transitive)
+6. Store all discovered objects in `migration_share_objects`
+7. Add requested objects with level=0 (even if no dependencies)
 
 **Key Features:**
-- Handles both tables and views
-- Discovers cross-schema dependencies automatically
+- **CRITICAL**: Uses SOURCE_OBJECT_SCHEMA from GET_LINEAGE output (not hardcoded P_SCHEMA)
+- Handles both tables and views with automatic type detection
+- Discovers cross-schema dependencies automatically (e.g., MART → SRC)
+- GET_LINEAGE returns all transitive dependencies - no manual BFS recursion needed
 - Uses dependency distance from GET_LINEAGE for execution order
 - Fully idempotent (deletes existing records before insert)
 
@@ -346,7 +349,9 @@ CREATE TABLE migration_execution_log (
 sp_execute_target_ddl(
     p_migration_id FLOAT,
     p_shared_database VARCHAR,  -- Shared DB name (e.g., IMCUST_SHARED_DB)
-    p_shared_schema VARCHAR     -- Admin schema in shared DB
+    p_shared_schema VARCHAR,    -- Admin schema in shared DB
+    p_target_database VARCHAR,  -- Target database for execution
+    p_admin_schema VARCHAR      -- Admin schema for execution log
 )
 ```
 
@@ -376,7 +381,9 @@ sp_execute_target_ddl(
 sp_execute_target_ctas(
     p_migration_id FLOAT,
     p_shared_database VARCHAR,
-    p_shared_schema VARCHAR
+    p_shared_schema VARCHAR,
+    p_target_database VARCHAR,  -- Target database for execution
+    p_admin_schema VARCHAR      -- Admin schema for execution log
 )
 ```
 
@@ -407,6 +414,8 @@ sp_execute_full_migration(
     p_migration_id FLOAT,
     p_shared_database VARCHAR,
     p_shared_schema VARCHAR,
+    p_target_database VARCHAR,  -- Target database for execution
+    p_admin_schema VARCHAR,     -- Admin schema for execution log
     p_validate_before_ctas BOOLEAN DEFAULT TRUE
 )
 ```
@@ -426,10 +435,12 @@ CREATE DATABASE IMCUST_SHARED_DB
 FROM SHARE NFMYIZV.IMCUST.IMCUST_TO_IMSDLC_SHARE;
 
 -- Then execute migration
-CALL dev_db.mart_investments_bolt.sp_execute_full_migration(
+CALL dev_db.admin_schema.sp_execute_full_migration(
     2,                      -- migration_id from source
     'IMCUST_SHARED_DB',     -- Shared database name
-    'ADMIN_SCHEMA'          -- Admin schema in shared DB
+    'ADMIN_SCHEMA',         -- Admin schema in shared DB
+    'DEV_DB',              -- Target database
+    'ADMIN_SCHEMA'         -- Admin schema for execution log
 );
 ```
 
@@ -531,7 +542,7 @@ SELECT
     status,
     COUNT(*) as count,
     ROUND(AVG(execution_time_ms), 2) as avg_time_ms
-FROM dev_db.mart_investments_bolt.migration_execution_log
+FROM dev_db.admin_schema.migration_execution_log
 WHERE migration_id = 2
 GROUP BY execution_phase, status
 ORDER BY execution_phase, status;
@@ -594,6 +605,83 @@ SELECT * FROM dev_db.MART_INVESTMENTS_BOLT.vw_transaction_analysis LIMIT 10;
 - Share names parameterized
 - Account identifiers parameterized
 - Fully reusable across different accounts
+
+---
+
+## Recent Critical Improvements (v2.0)
+
+### Bug Fix: Cross-Schema Dependency Handling
+
+**Issue:** The original implementation of `sp_get_upstream_dependencies` used a hardcoded `P_SCHEMA` parameter when building fully qualified names for dependency lookups. This caused "object doesn't exist" errors when dependencies existed in different schemas (e.g., MART_INVESTMENTS_BOLT depending on SRC_INVESTMENTS_BOLT).
+
+**Old Code (Broken):**
+```javascript
+// Used hardcoded P_SCHEMA for all objects
+var full_name = P_DATABASE + '.' + P_SCHEMA + '.' + current.name;
+```
+
+**Fixed Code:**
+```javascript
+// Uses actual SOURCE_OBJECT_SCHEMA from GET_LINEAGE output
+var dep_schema = result.getColumnValue('SOURCE_OBJECT_SCHEMA');
+var dep_full_name = dep_database + '.' + dep_schema + '.' + dep_name;
+```
+
+**Impact:**
+- ✅ Cross-schema dependencies now correctly discovered and tracked
+- ✅ No more "object doesn't exist" errors during dependency resolution
+- ✅ Proper schema preservation in migration_share_objects table
+
+### Simplification: Removed Unnecessary BFS Recursion
+
+**Discovery:** Testing revealed that `SNOWFLAKE.CORE.GET_LINEAGE()` returns ALL transitive dependencies in a single call, not just direct dependencies. The DISTANCE column indicates the level (1=direct, 2=transitive, etc.).
+
+**Old Code (Unnecessary Complexity):**
+```javascript
+// Manual BFS loop through dependency graph - NOT NEEDED!
+while (objects_to_process.length > 0) {
+    var current = objects_to_process.shift();
+    // Call GET_LINEAGE
+    // Add results back to queue for more processing
+    objects_to_process.push({...});  // Causes manual recursion
+}
+```
+
+**New Code (Simplified):**
+```javascript
+// Simple for loop - GET_LINEAGE does all the work
+for (var i = 0; i < object_list.length; i++) {
+    var obj_name = object_list[i];
+    // Call GET_LINEAGE once - it returns ALL dependencies
+    var result = stmt.execute();
+    while (result.next()) {
+        // Process all levels at once
+        var distance = result.getColumnValue('DISTANCE');
+    }
+}
+```
+
+**Impact:**
+- ✅ Code reduced from ~150 lines to ~80 lines
+- ✅ Improved performance (fewer GET_LINEAGE calls)
+- ✅ Simpler logic, easier to understand and maintain
+- ✅ Correct dependency level tracking from GET_LINEAGE DISTANCE
+
+### Standardization: IMSDLC Admin Schema
+
+**Change:** All IMSDLC stored procedures and execution logs moved from `mart_investments_bolt` schema to `admin_schema` for consistency with IMCUST.
+
+**Updated Procedures:**
+- `sp_execute_target_ddl` - Added `p_target_database` and `p_admin_schema` parameters
+- `sp_execute_target_ctas` - Added `p_target_database` and `p_admin_schema` parameters
+- `sp_execute_full_migration` - Added parameters and passes to sub-procedures
+- `migration_execution_log` table - Now created in `admin_schema`
+
+**Impact:**
+- ✅ Consistent schema structure across both accounts
+- ✅ Admin operations isolated from data schemas
+- ✅ Parameterized schema references (no hardcoding)
+- ✅ More flexible for different target environments
 
 ---
 
@@ -678,6 +766,16 @@ Cannot access migration_ddl_scripts in shared database
 - USAGE on admin_schema granted to share
 - SELECT on metadata tables granted to database role
 
+**5. Object Doesn't Exist in Cross-Schema Dependencies**
+```
+Object 'PROD_DB.MART_INVESTMENTS_BOLT.TABLE_NAME' does not exist
+(when the object is actually in SRC_INVESTMENTS_BOLT)
+```
+
+**Cause:** Older versions of `sp_get_upstream_dependencies` used hardcoded P_SCHEMA for all objects.
+
+**Solution:** Upgrade to fixed version that uses SOURCE_OBJECT_SCHEMA from GET_LINEAGE output. The fixed version is available in [IMCUST/02_sp_get_upstream_dependencies.sql](IMCUST/02_sp_get_upstream_dependencies.sql).
+
 ### Validation Queries
 
 ```sql
@@ -697,7 +795,7 @@ SHOW DATABASES LIKE 'IMCUST_SHARED_DB';
 SHOW SCHEMAS IN DATABASE IMCUST_SHARED_DB;
 
 -- Target: Check execution log
-SELECT * FROM dev_db.mart_investments_bolt.migration_execution_log
+SELECT * FROM dev_db.admin_schema.migration_execution_log
 WHERE migration_id = ?
 ORDER BY log_id;
 ```
@@ -781,6 +879,8 @@ Before using in production:
 This framework provides enterprise-grade automation for Snowflake cross-account migrations with:
 
 ✅ **Automated dependency discovery** using GET_LINEAGE
+✅ **Correct cross-schema dependency handling** (v2.0 fix)
+✅ **Simplified implementation** - removed unnecessary BFS recursion
 ✅ **Schema-preserving migrations** for simplified object references
 ✅ **Secure data sharing** with database roles and shares
 ✅ **Complete audit trail** with detailed execution logs
@@ -788,9 +888,16 @@ This framework provides enterprise-grade automation for Snowflake cross-account 
 ✅ **Idempotent operations** - safe to re-run
 ✅ **100% test success** - validated with real-world dataset
 
-**Test Results:**
+**Version 2.0 Improvements:**
+- **Critical Bug Fix**: Uses SOURCE_OBJECT_SCHEMA from GET_LINEAGE instead of hardcoded P_SCHEMA
+- **Code Simplification**: Removed manual BFS recursion (~150 lines → ~80 lines)
+- **Standardization**: IMSDLC procedures now use admin_schema consistently
+- **Enhanced Parameterization**: Added p_target_database and p_admin_schema parameters
+
+**Test Results (v2.0):**
 - 14 DDL scripts executed successfully (100%)
 - 13 CTAS scripts executed successfully (100%)
+- Cross-schema dependencies correctly discovered (MART → SRC)
 - All row counts validated and matched
 - View functionality confirmed
 

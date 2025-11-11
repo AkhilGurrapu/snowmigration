@@ -1,8 +1,8 @@
 -- ============================================
--- IMCUST (SOURCE) - Stored Procedure: Get Upstream Dependencies
+-- IMCUST (SOURCE) - Stored Procedure: Get Upstream Dependencies (FIXED)
 -- ============================================
--- Purpose: Find all upstream dependencies using SNOWFLAKE.CORE.GET_LINEAGE
--- This procedure recursively discovers all objects that the target objects depend on
+-- Purpose: Discover all upstream dependencies for requested objects using GET_LINEAGE
+-- GET_LINEAGE returns ALL transitive dependencies in ONE call - no recursion needed!
 
 USE ROLE ACCOUNTADMIN;
 USE DATABASE PROD_DB;
@@ -11,44 +11,27 @@ USE SCHEMA ADMIN_SCHEMA;
 CREATE OR REPLACE PROCEDURE PROD_DB.ADMIN_SCHEMA.sp_get_upstream_dependencies(
     p_migration_id FLOAT,
     p_database VARCHAR,
-    p_schema VARCHAR,
-    p_object_list_json VARCHAR  -- Changed to VARCHAR to accept JSON string
+    p_schema VARCHAR,        -- Initial schema hint for user-provided objects
+    p_object_list_json VARCHAR  -- JSON array of object names to migrate
 )
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 EXECUTE AS OWNER
 AS
 $$
-    var all_dependencies = new Set();
-    var processed_objects = new Set();
-    var objects_to_process = [];
+    var all_dependencies = new Set();  // Use Set to avoid duplicates
 
-    // Parse the JSON string to get the array
+    // Parse the JSON string to get the array of object names
     var object_list = JSON.parse(P_OBJECT_LIST_JSON);
-
-    // Initialize with input objects
-    for (var i = 0; i < object_list.length; i++) {
-        objects_to_process.push({
-            name: object_list[i],
-            level: 0
-        });
-    }
 
     var max_level = 0;
 
-    // Breadth-first search for dependencies
-    while (objects_to_process.length > 0) {
-        var current = objects_to_process.shift();
-        var full_name = P_DATABASE + '.' + P_SCHEMA + '.' + current.name;
+    // Process each requested object
+    for (var i = 0; i < object_list.length; i++) {
+        var obj_name = object_list[i];
+        var full_name = P_DATABASE + '.' + P_SCHEMA + '.' + obj_name;
 
-        if (processed_objects.has(full_name)) {
-            continue;
-        }
-
-        processed_objects.add(full_name);
-
-        // Get upstream dependencies using GET_LINEAGE
-        // Note: Using 'TABLE' works for both tables and views in GET_LINEAGE
+        // Call GET_LINEAGE - it returns ALL transitive dependencies in ONE call!
         var get_lineage_sql = `
             SELECT
                 SOURCE_OBJECT_DATABASE,
@@ -61,7 +44,7 @@ $$
                     '${full_name}',
                     'TABLE',
                     'UPSTREAM',
-                    5
+                    5  -- Max depth to traverse
                 )
             )
             WHERE SOURCE_OBJECT_NAME IS NOT NULL
@@ -71,6 +54,7 @@ $$
             var stmt = snowflake.createStatement({sqlText: get_lineage_sql});
             var result = stmt.execute();
 
+            // Store all dependencies returned (GET_LINEAGE gives us ALL levels at once)
             while (result.next()) {
                 var dep_database = result.getColumnValue('SOURCE_OBJECT_DATABASE');
                 var dep_schema = result.getColumnValue('SOURCE_OBJECT_SCHEMA');
@@ -78,40 +62,28 @@ $$
                 var dep_type = result.getColumnValue('SOURCE_OBJECT_DOMAIN');
                 var distance = result.getColumnValue('DISTANCE');
 
-                var dep_level = current.level + distance;
-                if (dep_level > max_level) max_level = dep_level;
+                if (distance > max_level) max_level = distance;
 
                 var dep_full_name = dep_database + '.' + dep_schema + '.' + dep_name;
 
+                // Store as JSON to preserve all info and avoid duplicates
                 all_dependencies.add(JSON.stringify({
                     database: dep_database,
                     schema: dep_schema,
                     name: dep_name,
                     full_name: dep_full_name,
                     type: dep_type,
-                    level: dep_level
+                    level: distance
                 }));
-
-                // Add to processing queue
-                objects_to_process.push({
-                    name: dep_name,
-                    level: dep_level
-                });
             }
         } catch (err) {
-            // Object might not support lineage (views, etc), skip
+            // Object might not support lineage, skip
             continue;
         }
-    }
 
-    // Add the originally requested objects with level 0
-    // This ensures objects with no dependencies are still included
-    for (var i = 0; i < object_list.length; i++) {
-        var obj_name = object_list[i];
-        var full_name = P_DATABASE + '.' + P_SCHEMA + '.' + obj_name;
-
-        // Detect object type (INFORMATION_SCHEMA stores names in uppercase)
-        var obj_type = 'TABLE';  // Default to TABLE
+        // Add the requested object itself with level 0
+        // Detect object type
+        var obj_type = 'TABLE';  // Default
         try {
             var type_check_sql = `
                 SELECT CASE
@@ -129,9 +101,10 @@ $$
                 obj_type = type_result.getColumnValue('OBJ_TYPE');
             }
         } catch (err) {
-            // If detection fails, keep default 'TABLE'
+            // Keep default 'TABLE'
         }
 
+        // Add requested object with level 0
         all_dependencies.add(JSON.stringify({
             database: P_DATABASE,
             schema: P_SCHEMA,
@@ -142,7 +115,7 @@ $$
         }));
     }
 
-    // Clear any existing records for this migration_id to ensure idempotency
+    // Clear existing records for idempotency
     var delete_sql = `DELETE FROM migration_share_objects WHERE migration_id = ?`;
     var stmt = snowflake.createStatement({
         sqlText: delete_sql,
@@ -150,7 +123,7 @@ $$
     });
     stmt.execute();
 
-    // Store all dependencies with dependency level from GET_LINEAGE distance
+    // Insert all discovered dependencies
     var insert_count = 0;
     all_dependencies.forEach(function(dep_json) {
         var dep = JSON.parse(dep_json);
