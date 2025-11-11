@@ -103,6 +103,44 @@ $$
         }
     }
 
+    // Add the originally requested objects with level 0
+    // This ensures objects with no dependencies are still included
+    for (var i = 0; i < object_list.length; i++) {
+        var obj_name = object_list[i];
+        var full_name = P_DATABASE + '.' + P_SCHEMA + '.' + obj_name;
+
+        // Detect object type
+        var obj_type = 'TABLE';  // Default to TABLE
+        try {
+            var type_check_sql = `
+                SELECT CASE
+                    WHEN COUNT(*) > 0 THEN 'VIEW'
+                    ELSE 'TABLE'
+                END as obj_type
+                FROM INFORMATION_SCHEMA.VIEWS
+                WHERE TABLE_CATALOG = '${P_DATABASE}'
+                AND TABLE_SCHEMA = '${P_SCHEMA}'
+                AND TABLE_NAME = '${obj_name}'
+            `;
+            var type_stmt = snowflake.createStatement({sqlText: type_check_sql});
+            var type_result = type_stmt.execute();
+            if (type_result.next()) {
+                obj_type = type_result.getColumnValue('OBJ_TYPE');
+            }
+        } catch (err) {
+            // If detection fails, keep default 'TABLE'
+        }
+
+        all_dependencies.add(JSON.stringify({
+            database: P_DATABASE,
+            schema: P_SCHEMA,
+            name: obj_name,
+            full_name: full_name,
+            type: obj_type,
+            level: 0
+        }));
+    }
+
     // Clear any existing records for this migration_id to ensure idempotency
     var delete_sql = `DELETE FROM migration_share_objects WHERE migration_id = ?`;
     var stmt = snowflake.createStatement({
@@ -128,7 +166,7 @@ $$
         insert_count++;
     });
 
-    return `Found ${insert_count} upstream dependencies across ${max_level} levels`;
+    return `Found ${insert_count} total objects (including ${object_list.length} requested objects and ${insert_count - object_list.length} dependencies) across ${max_level} levels`;
 $$;
 
 -- Test that procedure was created
