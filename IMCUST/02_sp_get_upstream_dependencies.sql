@@ -106,14 +106,18 @@ $$
         }
 
         // Add requested object with level 0
-        all_dependencies.add(JSON.stringify({
-            database: P_DATABASE,
-            schema: P_SCHEMA,
-            name: obj_name,
-            full_name: full_name,
-            type: obj_type,
-            level: 0
-        }));
+        // IMPORTANT: Skip VIEWs - only migrate their table dependencies
+        // VIEWs are not shared or created on target, only their underlying tables
+        if (obj_type !== 'VIEW') {
+            all_dependencies.add(JSON.stringify({
+                database: P_DATABASE,
+                schema: P_SCHEMA,
+                name: obj_name,
+                full_name: full_name,
+                type: obj_type,
+                level: 0
+            }));
+        }
     }
 
     // Clear existing records for idempotency
