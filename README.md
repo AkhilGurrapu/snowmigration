@@ -361,6 +361,11 @@ ALTER WAREHOUSE MIGRATION_WH SUSPEND;
 - ✅ Simplified API from 7 to 6 parameters
 - ✅ Database boundary enforced by GET_LINEAGE scope (cross-schema ✓, cross-database ✗)
 
+### Fix 4: Case-Insensitive VIEW Detection (2025-11-11)
+- ✅ Fixed VIEW detection in `sp_get_upstream_dependencies` to use `UPPER()` for INFORMATION_SCHEMA queries
+- ✅ VIEWs now correctly identified and skip CTAS generation
+- ✅ Prevents incorrect TABLE classification for views with lowercase names
+
 **See [CROSS_SCHEMA_FIX_SUMMARY.md](CROSS_SCHEMA_FIX_SUMMARY.md) for complete details**
 
 ## Future Enhancements

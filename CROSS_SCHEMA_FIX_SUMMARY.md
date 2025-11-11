@@ -676,6 +676,95 @@ CALL sp_orchestrate_migration(
 
 **No behavior change** - schema mapping was always automatic, now the API reflects that truth.
 
+## Fix 4: Case-Insensitive VIEW Detection
+
+### Issue Identified
+
+VIEW detection in `sp_get_upstream_dependencies` failed for views with lowercase names due to case sensitivity in INFORMATION_SCHEMA queries.
+
+**Problem**: When checking if an object is a VIEW:
+```javascript
+// Before - case-sensitive, failed for lowercase view names
+WHERE TABLE_CATALOG = '${P_DATABASE}'
+AND TABLE_SCHEMA = '${P_SCHEMA}'
+AND TABLE_NAME = '${obj_name}'
+```
+
+If object name is `'test_summary_view'` but INFORMATION_SCHEMA stores it as `'TEST_SUMMARY_VIEW'`, the query returns 0 rows, causing VIEW to be misclassified as TABLE.
+
+### Impact
+
+**Symptom**: VIEWs were incorrectly detected as TABLEs, resulting in:
+- ❌ CTAS scripts generated for VIEWs (which is wrong - VIEWs don't need data population)
+- ❌ Extra warehouse compute cost for unnecessary CTAS execution attempts
+- ❌ Potential migration failures when trying to execute CTAS on VIEWs
+
+**Example - Before Fix**:
+```
+Object: test_summary_view (actually a VIEW)
+Detected as: TABLE ❌
+Result: CTAS script generated incorrectly
+Migration metadata:
+  - migration_ddl_scripts: 1 entry (correct)
+  - migration_ctas_scripts: 1 entry (WRONG! Should be 0)
+```
+
+### Solution: Case-Insensitive Comparison
+
+**Fixed Query**:
+```javascript
+// After - case-insensitive using UPPER()
+WHERE TABLE_CATALOG = UPPER('${P_DATABASE}')
+AND TABLE_SCHEMA = UPPER('${P_SCHEMA}')
+AND TABLE_NAME = UPPER('${obj_name}')
+```
+
+**File Changed**: `IMCUST/02_sp_get_upstream_dependencies.sql` (lines 121-123)
+
+### Validation
+
+**Test Migration** (ID: 501):
+```sql
+CALL sp_orchestrate_migration(
+    'PROD_DB',
+    'MART_INVESTMENTS_BOLT',
+    'DEV_DB',
+    ARRAY_CONSTRUCT('test_processed_transactions', 'test_summary_view'),
+    'MIGRATION_SHARE_E2E_TEST',
+    'IMSDLC'
+);
+```
+
+**Before Fix**:
+```
+Found 5 total objects...
+Generated 5 DDL scripts and 5 CTAS scripts  ❌ Wrong!
+```
+
+**After Fix**:
+```
+Found 5 total objects...
+Generated 5 DDL scripts and 4 CTAS scripts  ✅ Correct!
+  - test_summary_view correctly identified as VIEW
+  - No CTAS generated for VIEW
+```
+
+**Object Type Verification**:
+```
+| object_name           | object_type |
+|-----------------------|-------------|
+| test_processed_trans  | TABLE       | ✅
+| test_summary_view     | VIEW        | ✅ Fixed!
+| TEST_RAW_TRANSACTIONS | TABLE       | ✅
+```
+
+### Benefits
+
+1. **Correct Object Classification**: VIEWs always identified correctly regardless of name casing
+2. **Cost Savings**: No unnecessary CTAS execution for VIEWs
+3. **Migration Reliability**: Prevents errors from attempting CTAS on VIEWs
+4. **Accurate Metadata**: migration_ctas_scripts table contains only TABLE entries
+
 ## Conclusion
 
 All critical issues are now fixed and tested. The system correctly:
@@ -685,12 +774,13 @@ All critical issues are now fixed and tested. The system correctly:
 - ✅ Grants access to all involved schemas via database role (cross-schema fix)
 - ✅ **Always includes requested objects, even without dependencies** (requested objects fix)
 - ✅ **Marks requested objects with level 0 for clear identification** (requested objects fix)
-- ✅ **Detects object type (TABLE vs VIEW) automatically** (requested objects fix)
+- ✅ **Detects object type (TABLE vs VIEW) with case-insensitive logic** (VIEW detection fix)
 - ✅ **Handles VIEWs correctly - DDL only, no CTAS** (automatic optimization)
 - ✅ **Removed misleading parameter - schema mapping is explicitly automatic** (API cleanup)
 
 These fixes transform the migration system from:
 - Single-schema only → **Fully multi-schema capable**
 - Dependency-only → **Complete object coverage (requested + dependencies)**
+- Case-sensitive VIEW detection → **Robust case-insensitive object type detection**
 - Inefficient VIEW handling → **Optimized: VIEWs skip CTAS phase**
 - Misleading API → **Clear, accurate parameter signature**

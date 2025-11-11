@@ -109,7 +109,7 @@ $$
         var obj_name = object_list[i];
         var full_name = P_DATABASE + '.' + P_SCHEMA + '.' + obj_name;
 
-        // Detect object type
+        // Detect object type (INFORMATION_SCHEMA stores names in uppercase)
         var obj_type = 'TABLE';  // Default to TABLE
         try {
             var type_check_sql = `
@@ -118,9 +118,9 @@ $$
                     ELSE 'TABLE'
                 END as obj_type
                 FROM INFORMATION_SCHEMA.VIEWS
-                WHERE TABLE_CATALOG = '${P_DATABASE}'
-                AND TABLE_SCHEMA = '${P_SCHEMA}'
-                AND TABLE_NAME = '${obj_name}'
+                WHERE TABLE_CATALOG = UPPER('${P_DATABASE}')
+                AND TABLE_SCHEMA = UPPER('${P_SCHEMA}')
+                AND TABLE_NAME = UPPER('${obj_name}')
             `;
             var type_stmt = snowflake.createStatement({sqlText: type_check_sql});
             var type_result = type_stmt.execute();
