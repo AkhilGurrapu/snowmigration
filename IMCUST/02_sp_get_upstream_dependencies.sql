@@ -47,8 +47,11 @@ $$
         processed_objects.add(full_name);
 
         // Get upstream dependencies using GET_LINEAGE
+        // Note: Using 'TABLE' works for both tables and views in GET_LINEAGE
         var get_lineage_sql = `
             SELECT
+                SOURCE_OBJECT_DATABASE,
+                SOURCE_OBJECT_SCHEMA,
                 SOURCE_OBJECT_NAME,
                 SOURCE_OBJECT_DOMAIN,
                 DISTANCE
@@ -68,6 +71,8 @@ $$
             var result = stmt.execute();
 
             while (result.next()) {
+                var dep_database = result.getColumnValue('SOURCE_OBJECT_DATABASE');
+                var dep_schema = result.getColumnValue('SOURCE_OBJECT_SCHEMA');
                 var dep_name = result.getColumnValue('SOURCE_OBJECT_NAME');
                 var dep_type = result.getColumnValue('SOURCE_OBJECT_DOMAIN');
                 var distance = result.getColumnValue('DISTANCE');
@@ -75,18 +80,20 @@ $$
                 var dep_level = current.level + distance;
                 if (dep_level > max_level) max_level = dep_level;
 
+                var dep_full_name = dep_database + '.' + dep_schema + '.' + dep_name;
+
                 all_dependencies.add(JSON.stringify({
+                    database: dep_database,
+                    schema: dep_schema,
                     name: dep_name,
+                    full_name: dep_full_name,
                     type: dep_type,
                     level: dep_level
                 }));
 
-                // Extract object name from fully qualified name
-                var obj_parts = dep_name.split('.');
-                var obj_name = obj_parts[obj_parts.length - 1];
-
+                // Add to processing queue
                 objects_to_process.push({
-                    name: obj_name,
+                    name: dep_name,
                     level: dep_level
                 });
             }
@@ -110,12 +117,12 @@ $$
         var dep = JSON.parse(dep_json);
         var insert_sql = `
             INSERT INTO migration_share_objects
-            (migration_id, object_name, object_type, fully_qualified_name, dependency_level)
-            VALUES (?, ?, ?, ?, ?)
+            (migration_id, source_database, source_schema, object_name, object_type, fully_qualified_name, dependency_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `;
         var stmt = snowflake.createStatement({
             sqlText: insert_sql,
-            binds: [P_MIGRATION_ID, dep.name, dep.type, dep.name, dep.level]
+            binds: [P_MIGRATION_ID, dep.database, dep.schema, dep.name, dep.type, dep.full_name, dep.level]
         });
         stmt.execute();
         insert_count++;

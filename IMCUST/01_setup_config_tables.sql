@@ -24,6 +24,8 @@ CREATE OR REPLACE TABLE migration_config (
 -- Table to store DDL scripts for each object
 CREATE OR REPLACE TABLE migration_ddl_scripts (
     migration_id NUMBER,
+    source_database VARCHAR,
+    source_schema VARCHAR,
     object_name VARCHAR,
     object_type VARCHAR,
     dependency_level NUMBER,
@@ -35,6 +37,8 @@ CREATE OR REPLACE TABLE migration_ddl_scripts (
 -- Table to store CTAS scripts for data migration
 CREATE OR REPLACE TABLE migration_ctas_scripts (
     migration_id NUMBER,
+    source_database VARCHAR,
+    source_schema VARCHAR,
     object_name VARCHAR,
     ctas_script VARCHAR,
     execution_order NUMBER,
@@ -44,6 +48,8 @@ CREATE OR REPLACE TABLE migration_ctas_scripts (
 -- Table to store dependency objects that need to be shared
 CREATE OR REPLACE TABLE migration_share_objects (
     migration_id NUMBER,
+    source_database VARCHAR,
+    source_schema VARCHAR,
     object_name VARCHAR,
     object_type VARCHAR,
     fully_qualified_name VARCHAR,

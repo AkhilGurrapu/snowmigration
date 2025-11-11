@@ -21,6 +21,9 @@ $$
     // Order by dependency_level DESC so deepest dependencies are created first
     var get_objects_sql = `
         SELECT DISTINCT
+            source_database,
+            source_schema,
+            object_name,
             fully_qualified_name,
             object_type,
             dependency_level
@@ -48,15 +51,12 @@ $$
     var ctas_count = 0;
 
     while (objects.next()) {
+        var source_db = objects.getColumnValue('SOURCE_DATABASE');
+        var source_schema = objects.getColumnValue('SOURCE_SCHEMA');
+        var obj_name = objects.getColumnValue('OBJECT_NAME');
         var fqn = objects.getColumnValue('FULLY_QUALIFIED_NAME');
         var obj_type = objects.getColumnValue('OBJECT_TYPE');
         var dep_level = objects.getColumnValue('DEPENDENCY_LEVEL');
-
-        // Extract object name
-        var parts = fqn.split('.');
-        var obj_name = parts[parts.length - 1];
-        var source_schema = parts.length > 1 ? parts[parts.length - 2] : P_TARGET_SCHEMA;
-        var source_db = parts.length > 2 ? parts[parts.length - 3] : '';
 
         // Get DDL based on object type
         var ddl_type = obj_type === 'VIEW' ? 'VIEW' : 'TABLE';
@@ -79,12 +79,12 @@ $$
             // Store DDL scripts with dependency level from GET_LINEAGE distance
             var insert_ddl = `
                 INSERT INTO migration_ddl_scripts
-                (migration_id, object_name, object_type, dependency_level, source_ddl, target_ddl)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (migration_id, source_database, source_schema, object_name, object_type, dependency_level, source_ddl, target_ddl)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `;
             stmt = snowflake.createStatement({
                 sqlText: insert_ddl,
-                binds: [P_MIGRATION_ID, obj_name, obj_type, dep_level, source_ddl, target_ddl]
+                binds: [P_MIGRATION_ID, source_db, source_schema, obj_name, obj_type, dep_level, source_ddl, target_ddl]
             });
             stmt.execute();
             ddl_count++;
@@ -93,18 +93,18 @@ $$
             if (obj_type === 'TABLE') {
                 var ctas_script = `
 -- CTAS for ${obj_name}
-CREATE OR REPLACE TABLE ${P_TARGET_DATABASE}.${P_TARGET_SCHEMA}.${obj_name} AS
+CREATE OR REPLACE TABLE ${P_TARGET_DATABASE}.${source_schema}.${obj_name} AS
 SELECT * FROM <SHARED_DB_NAME>.${source_schema}.${obj_name};
                 `;
 
                 var insert_ctas = `
                     INSERT INTO migration_ctas_scripts
-                    (migration_id, object_name, ctas_script, execution_order)
-                    VALUES (?, ?, ?, ?)
+                    (migration_id, source_database, source_schema, object_name, ctas_script, execution_order)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 `;
                 stmt = snowflake.createStatement({
                     sqlText: insert_ctas,
-                    binds: [P_MIGRATION_ID, obj_name, ctas_script, dep_level]
+                    binds: [P_MIGRATION_ID, source_db, source_schema, obj_name, ctas_script, dep_level]
                 });
                 stmt.execute();
                 ctas_count++;
