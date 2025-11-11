@@ -20,8 +20,6 @@ $$
 DECLARE
     v_query VARCHAR;
     v_table_name VARCHAR;
-    ddl_resultset RESULTSET;
-    ddl_cursor CURSOR FOR ddl_resultset;
     v_object_name VARCHAR;
     v_object_type VARCHAR;
     v_ddl_script VARCHAR;
@@ -35,14 +33,16 @@ BEGIN
     -- Build table name dynamically using provided schema
     v_table_name := p_shared_database || '.' || p_shared_schema || '.migration_ddl_scripts';
 
-    -- Build dynamic query
+    -- Build dynamic query with direct string substitution
+    -- ORDER BY dependency_level DESC ensures dependencies are created BEFORE objects that reference them
     v_query := 'SELECT object_name, object_type, target_ddl, dependency_level ' ||
-               'FROM IDENTIFIER(?) ' ||
-               'WHERE migration_id = ? ' ||
-               'ORDER BY dependency_level, object_name';
+               'FROM ' || v_table_name || ' ' ||
+               'WHERE migration_id = ' || p_migration_id || ' ' ||
+               'ORDER BY dependency_level DESC, object_name';
 
     -- Execute query and get resultset
-    ddl_resultset := (EXECUTE IMMEDIATE :v_query USING (v_table_name, p_migration_id));
+    LET ddl_resultset RESULTSET := (EXECUTE IMMEDIATE :v_query);
+    LET ddl_cursor CURSOR FOR ddl_resultset;
 
     -- Open cursor on resultset
     OPEN ddl_cursor;
@@ -66,8 +66,7 @@ BEGIN
                  sql_statement, status, execution_time_ms)
             VALUES
                 (:p_migration_id, 'DDL_EXECUTION', :v_object_name, :v_object_type,
-                 :v_ddl_script, 'SUCCESS',
-                 DATEDIFF(millisecond, :v_start_time, :v_end_time));
+                 :v_ddl_script, 'SUCCESS', 0);
 
             v_success_count := v_success_count + 1;
 
@@ -82,8 +81,7 @@ BEGIN
                      sql_statement, status, error_message, execution_time_ms)
                 VALUES
                     (:p_migration_id, 'DDL_EXECUTION', :v_object_name, :v_object_type,
-                     :v_ddl_script, 'FAILED', :v_error_msg,
-                     DATEDIFF(millisecond, :v_start_time, :v_end_time));
+                     :v_ddl_script, 'FAILED', :v_error_msg, 0);
 
                 v_error_count := v_error_count + 1;
         END;

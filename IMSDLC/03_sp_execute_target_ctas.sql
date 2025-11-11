@@ -20,8 +20,6 @@ $$
 DECLARE
     v_query VARCHAR;
     v_table_name VARCHAR;
-    ctas_resultset RESULTSET;
-    ctas_cursor CURSOR FOR ctas_resultset;
     v_object_name VARCHAR;
     v_ctas_script VARCHAR;
     v_exec_order NUMBER;
@@ -35,14 +33,15 @@ BEGIN
     -- Build table name dynamically using provided schema
     v_table_name := p_shared_database || '.' || p_shared_schema || '.migration_ctas_scripts';
 
-    -- Build dynamic query
+    -- Build dynamic query with direct string substitution
     v_query := 'SELECT object_name, ctas_script, execution_order ' ||
-               'FROM IDENTIFIER(?) ' ||
-               'WHERE migration_id = ? ' ||
+               'FROM ' || v_table_name || ' ' ||
+               'WHERE migration_id = ' || p_migration_id || ' ' ||
                'ORDER BY execution_order';
 
     -- Execute query and get resultset
-    ctas_resultset := (EXECUTE IMMEDIATE :v_query USING (v_table_name, p_migration_id));
+    LET ctas_resultset RESULTSET := (EXECUTE IMMEDIATE :v_query);
+    LET ctas_cursor CURSOR FOR ctas_resultset;
 
     -- Open cursor on resultset
     OPEN ctas_cursor;
@@ -68,8 +67,7 @@ BEGIN
                  sql_statement, status, execution_time_ms)
             VALUES
                 (:p_migration_id, 'CTAS_EXECUTION', :v_object_name, 'CTAS',
-                 :v_final_script, 'SUCCESS',
-                 DATEDIFF(millisecond, :v_start_time, :v_end_time));
+                 :v_final_script, 'SUCCESS', 0);
 
             v_success_count := v_success_count + 1;
 
@@ -84,8 +82,7 @@ BEGIN
                      sql_statement, status, error_message, execution_time_ms)
                 VALUES
                     (:p_migration_id, 'CTAS_EXECUTION', :v_object_name, 'CTAS',
-                     :v_final_script, 'FAILED', :v_error_msg,
-                     DATEDIFF(millisecond, :v_start_time, :v_end_time));
+                     :v_final_script, 'FAILED', :v_error_msg, 0);
 
                 v_error_count := v_error_count + 1;
         END;

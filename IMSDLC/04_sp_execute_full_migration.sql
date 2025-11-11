@@ -26,41 +26,32 @@ DECLARE
     v_ctas_count NUMBER;
     v_query VARCHAR;
     v_table_name VARCHAR;
-    v_count_result RESULTSET;
-    v_count_cursor CURSOR FOR v_count_result;
 BEGIN
-    -- Step 1: Validate shared database exists
-    BEGIN
-        EXECUTE IMMEDIATE 'USE DATABASE ' || :p_shared_database;
-    EXCEPTION
-        WHEN OTHER THEN
-            RETURN 'ERROR: Shared database ' || :p_shared_database ||
-                   ' does not exist. Create it first from the share.';
-    END;
-
-    -- Step 2: Get counts from shared metadata - DDL scripts
-    v_query := 'SELECT COUNT(*) as cnt FROM IDENTIFIER(?) WHERE migration_id = ?';
+    -- Step 1: Get counts from shared metadata - DDL scripts
     v_table_name := p_shared_database || '.' || p_shared_schema || '.migration_ddl_scripts';
-    v_count_result := (EXECUTE IMMEDIATE :v_query USING (v_table_name, p_migration_id));
-    OPEN v_count_cursor;
-    FETCH v_count_cursor INTO v_ddl_count;
-    CLOSE v_count_cursor;
+    v_query := 'SELECT COUNT(*) as cnt FROM ' || v_table_name || ' WHERE migration_id = ' || p_migration_id;
+    LET count_rs RESULTSET := (EXECUTE IMMEDIATE :v_query);
+    LET count_cur CURSOR FOR count_rs;
+    OPEN count_cur;
+    FETCH count_cur INTO v_ddl_count;
+    CLOSE count_cur;
 
     -- Get counts from shared metadata - CTAS scripts
     v_table_name := p_shared_database || '.' || p_shared_schema || '.migration_ctas_scripts';
-    v_count_result := (EXECUTE IMMEDIATE :v_query USING (v_table_name, p_migration_id));
-    OPEN v_count_cursor;
-    FETCH v_count_cursor INTO v_ctas_count;
-    CLOSE v_count_cursor;
+    v_query := 'SELECT COUNT(*) as cnt FROM ' || v_table_name || ' WHERE migration_id = ' || p_migration_id;
+    count_rs := (EXECUTE IMMEDIATE :v_query);
+    OPEN count_cur FOR count_rs;
+    FETCH count_cur INTO v_ctas_count;
+    CLOSE count_cur;
 
     validation_msg := 'Found ' || :v_ddl_count || ' DDL scripts and ' ||
                       :v_ctas_count || ' CTAS scripts for migration ' || :p_migration_id || '.' || CHR(10);
 
-    -- Step 3: Execute DDL scripts
+    -- Step 2: Execute DDL scripts
     CALL sp_execute_target_ddl(:p_migration_id, :p_shared_database, :p_shared_schema)
         INTO :ddl_result;
 
-    -- Step 4: Execute CTAS scripts
+    -- Step 3: Execute CTAS scripts
     validation_msg := validation_msg || 'Proceeding with CTAS data migration.' || CHR(10);
 
     CALL sp_execute_target_ctas(:p_migration_id, :p_shared_database, :p_shared_schema)

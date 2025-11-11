@@ -74,6 +74,28 @@ $$
                 // Use regex to replace database name while preserving structure
                 var db_pattern = new RegExp(source_db.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
                 target_ddl = target_ddl.replace(db_pattern, P_TARGET_DATABASE);
+                
+                // Add fully qualified name (database.schema.object) to CREATE statement if not present
+                // GET_DDL sometimes omits schema/database in CREATE statements
+                // Check if CREATE statement has unqualified object name (no dots in object name after CREATE)
+                var create_pattern = /(CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW)\s+)([A-Z_][A-Z0-9_]*)/i;
+                var create_match = create_pattern.exec(target_ddl);
+                if (create_match !== null) {
+                    var obj_name_match = create_match[2];
+                    if (obj_name_match !== null && obj_name_match !== undefined && obj_name_match.indexOf('.') === -1) {
+                        // Object name is unqualified, add fully qualified name
+                        var unqualified_name = obj_name_match;
+                        var qualified_name = P_TARGET_DATABASE + '.' + source_schema + '.' + unqualified_name;
+                        target_ddl = target_ddl.replace(create_pattern, '$1' + qualified_name);
+                    }
+                }
+                
+                // For VIEWs: Also add database prefix to schema references that don't have one
+                if (obj_type === 'VIEW') {
+                    // Match schema names that are known (from our migration objects)
+                    var schema_pattern = /(\b)(SRC_INVESTMENTS_BOLT|MART_INVESTMENTS_BOLT|src_investments_bolt|mart_investments_bolt)\./gi;
+                    target_ddl = target_ddl.replace(schema_pattern, '$1' + P_TARGET_DATABASE + '.$2.');
+                }
             }
 
             // Store DDL scripts with dependency level from GET_LINEAGE distance
