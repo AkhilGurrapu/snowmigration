@@ -132,6 +132,7 @@ This will:
 ## Key Features
 
 ✅ **Automatic dependency resolution** using SNOWFLAKE.CORE.GET_LINEAGE
+✅ **Active objects only** - filters `SOURCE_STATUS = 'ACTIVE'` to exclude deleted objects
 ✅ **Cross-schema support** - handles dependencies across multiple schemas (MART_INVESTMENTS_BOLT, SRC_INVESTMENTS_BOLT, etc.)
 ✅ **Complete object coverage** - always includes requested objects, even if they have no dependencies
 ✅ **Correct execution ordering** - DDL scripts execute based on DISTANCE field from GET_LINEAGE (deepest dependencies first)

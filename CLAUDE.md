@@ -148,6 +148,7 @@ sp_get_upstream_dependencies(
 
 **Key Features:**
 - **CRITICAL**: Uses SOURCE_OBJECT_SCHEMA from GET_LINEAGE output (not hardcoded P_SCHEMA)
+- **CRITICAL**: Filters `SOURCE_STATUS = 'ACTIVE'` to exclude deleted objects
 - Handles both tables and views with automatic type detection
 - Discovers cross-schema dependencies automatically (e.g., MART → SRC)
 - GET_LINEAGE returns all transitive dependencies - no manual BFS recursion needed
@@ -890,6 +891,7 @@ This framework provides enterprise-grade automation for Snowflake cross-account 
 
 **Version 2.0 Improvements:**
 - **Critical Bug Fix**: Uses SOURCE_OBJECT_SCHEMA from GET_LINEAGE instead of hardcoded P_SCHEMA
+- **Active Objects Filter**: Filters `SOURCE_STATUS = 'ACTIVE'` to exclude deleted objects
 - **Code Simplification**: Removed manual BFS recursion (~150 lines → ~80 lines)
 - **Standardization**: IMSDLC procedures now use admin_schema consistently
 - **Enhanced Parameterization**: Added p_target_database and p_admin_schema parameters

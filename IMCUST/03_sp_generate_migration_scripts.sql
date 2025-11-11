@@ -69,12 +69,20 @@ $$
             ddl_result.next();
             var source_ddl = ddl_result.getColumnValue('DDL');
 
-            // Replace source database with target database
-            var target_ddl = source_ddl;
-            if (source_db) {
-                // Use regex to replace database name while preserving structure
-                var db_pattern = new RegExp(source_db.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-                target_ddl = target_ddl.replace(db_pattern, P_TARGET_DATABASE);
+            // GET_DDL returns DDL without database.schema prefix, so we need to inject it
+            // Example: "create or replace TABLE TABLE_NAME (" → "create or replace TABLE DEV_DB.SCHEMA.TABLE_NAME ("
+            var target_fqn = `${P_TARGET_DATABASE}.${source_schema}.${obj_name}`;
+
+            // Replace the object name in DDL with fully qualified name
+            // Pattern matches: CREATE OR REPLACE TABLE/VIEW <object_name> (
+            var ddl_pattern = new RegExp(`(create\\s+or\\s+replace\\s+(?:table|view))\\s+(${obj_name})\\s*\\(`, 'gi');
+            var target_ddl = source_ddl.replace(ddl_pattern, `$1 ${target_fqn} (`);
+
+            // If replacement didn't work (edge case), prepend schema to object name at beginning
+            if (target_ddl === source_ddl) {
+                // Fallback: try to match without parenthesis (for views with AS clause immediately)
+                var view_pattern = new RegExp(`(create\\s+or\\s+replace\\s+view)\\s+(${obj_name})\\s+`, 'gi');
+                target_ddl = source_ddl.replace(view_pattern, `$1 ${target_fqn} `);
             }
 
             // Store DDL scripts with dependency level from GET_LINEAGE distance

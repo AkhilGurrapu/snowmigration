@@ -48,6 +48,7 @@ $$
                 )
             )
             WHERE SOURCE_OBJECT_NAME IS NOT NULL
+              AND SOURCE_STATUS = 'ACTIVE'  -- Only include active objects, not deleted
         `;
 
         try {
