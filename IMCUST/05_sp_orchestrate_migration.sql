@@ -10,9 +10,9 @@ USE SCHEMA mart_investments_bolt;
 
 CREATE OR REPLACE PROCEDURE sp_orchestrate_migration(
     p_source_database VARCHAR,
-    p_source_schema VARCHAR,
+    p_source_schema VARCHAR,        -- Initial schema for object lookup only
     p_target_database VARCHAR,
-    p_target_schema VARCHAR,
+    -- p_target_schema REMOVED: Schema mapping is AUTOMATIC based on SOURCE_OBJECT_SCHEMA from GET_LINEAGE
     p_object_list ARRAY,
     p_share_name VARCHAR,
     p_target_account VARCHAR  -- Target Snowflake account identifier (e.g., 'IMSDLC', 'ORG123.ACCT456')
@@ -26,12 +26,12 @@ $$
     var insert_config = `
         INSERT INTO migration_config
         (source_database, source_schema, target_database, target_schema, object_list, status)
-        SELECT ?, ?, ?, ?, PARSE_JSON('${jsonStr}'), 'IN_PROGRESS'
+        SELECT ?, ?, ?, NULL, PARSE_JSON('${jsonStr}'), 'IN_PROGRESS'
     `;
 
     var stmt = snowflake.createStatement({
         sqlText: insert_config,
-        binds: [P_SOURCE_DATABASE, P_SOURCE_SCHEMA, P_TARGET_DATABASE, P_TARGET_SCHEMA]
+        binds: [P_SOURCE_DATABASE, P_SOURCE_SCHEMA, P_TARGET_DATABASE]
     });
     stmt.execute();
 
@@ -53,10 +53,12 @@ $$
     var deps_message = deps_result.getColumnValue(1);
 
     // Step 2: Generate migration scripts (DDL + CTAS)
+    // Note: p_target_schema parameter exists but is NOT used for schema mapping
+    // Schema mapping is automatic based on source_schema from migration_share_objects
     var call_scripts = `CALL sp_generate_migration_scripts(?, ?, ?)`;
     stmt = snowflake.createStatement({
         sqlText: call_scripts,
-        binds: [migration_id, P_TARGET_DATABASE, P_TARGET_SCHEMA]
+        binds: [migration_id, P_TARGET_DATABASE, NULL]  // NULL for unused target_schema
     });
     var scripts_result = stmt.execute();
     scripts_result.next();

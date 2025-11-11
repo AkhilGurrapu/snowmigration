@@ -131,12 +131,16 @@ This will:
 ## Key Features
 
 ✅ **Automatic dependency resolution** using SNOWFLAKE.CORE.GET_LINEAGE
+✅ **Cross-schema support** - handles dependencies across multiple schemas (MART_INVESTMENTS_BOLT, SRC_INVESTMENTS_BOLT, etc.)
+✅ **Complete object coverage** - always includes requested objects, even if they have no dependencies
 ✅ **Correct execution ordering** - DDL scripts execute based on DISTANCE field from GET_LINEAGE (deepest dependencies first)
 ✅ **Database name replacement** (prod_db → dev_db) while preserving schema names
+✅ **Schema preservation** - objects created in correct target schemas matching source structure
 ✅ **Data sharing with database roles** (Snowflake best practice)
 ✅ **Complete automation** - single procedure call on each side
 ✅ **Error handling** - continues execution and logs failures
-✅ **Execution tracking** - complete audit trail
+✅ **Execution tracking** - complete audit trail with dependency level tracking
+✅ **Object type detection** - automatically detects TABLE vs VIEW
 ✅ **Syntax validated** - all scripts tested with Snow CLI
 
 ## Monitoring & Validation
@@ -182,10 +186,175 @@ WHERE migration_id = 1 AND status = 'FAILED';
 
 ## Technical Notes
 
+### Stored Procedure Syntax
 - **JavaScript Stored Procedures** (IMCUST): Use FLOAT instead of NUMBER for parameters
 - **SQL Stored Procedures** (IMSDLC): Use RESULTSET pattern for dynamic SQL with cursors
 - **String Concatenation**: Use || operator but prepare strings before USING clause
+
+### Metadata and Tracking
 - **Data Sharing**: Includes migration metadata tables for target-side automation
+- **Dependency Levels**: Level 0 = requested objects, Level 1+ = upstream dependencies
+- **Schema Information**: Captured from `SOURCE_OBJECT_DATABASE` and `SOURCE_OBJECT_SCHEMA` in GET_LINEAGE
+- **Object Type Detection**: Queries `INFORMATION_SCHEMA.VIEWS` to determine TABLE vs VIEW
+
+### TABLE vs VIEW Handling
+
+**Key Difference**: VIEWs do NOT require data population (CTAS), only DDL execution.
+
+#### Processing Flow
+
+| Step | TABLEs | VIEWs |
+|------|--------|-------|
+| **1. Dependency Discovery** | ✅ Captured by GET_LINEAGE | ✅ Captured by GET_LINEAGE |
+| **2. DDL Extraction** | ✅ GET_DDL('TABLE', ...) | ✅ GET_DDL('VIEW', ...) |
+| **3. CTAS Generation** | ✅ Generated (line 93 check) | ❌ **Skipped** (`if obj_type === 'TABLE'`) |
+| **4. Share Access** | ✅ Granted for CTAS source | ✅ Granted for reference |
+| **5. Target DDL** | ✅ Creates empty table | ✅ Creates view with logic |
+| **6. Target CTAS** | ✅ Populates with data | ❌ **Skipped** (no CTAS exists) |
+
+#### Example: Mixed TABLE and VIEW Migration
+
+```sql
+-- Request migration of a VIEW that depends on TABLEs
+CALL sp_orchestrate_migration(
+    'PROD_DB',
+    'MART_INVESTMENTS_BOLT',
+    'DEV_DB',
+    'MART_INVESTMENTS_BOLT',
+    ARRAY_CONSTRUCT('VW_TRANSACTION_ANALYSIS'),  -- This is a VIEW
+    'MIGRATION_SHARE_001',
+    'IMSDLC'
+);
+```
+
+**Generated Metadata**:
+
+```
+migration_share_objects (3 objects):
+├── VW_TRANSACTION_ANALYSIS (VIEW, level=0)     ← Requested view
+├── FACT_TRANSACTIONS (TABLE, level=1)          ← Dependency
+└── DIM_STOCKS (TABLE, level=1)                 ← Dependency
+
+migration_ddl_scripts (3 scripts):
+├── VW_TRANSACTION_ANALYSIS (VIEW DDL)
+├── FACT_TRANSACTIONS (TABLE DDL)
+└── DIM_STOCKS (TABLE DDL)
+
+migration_ctas_scripts (2 scripts ONLY):
+├── FACT_TRANSACTIONS (CTAS)                    ← TABLE needs data
+└── DIM_STOCKS (CTAS)                           ← TABLE needs data
+    (VW_TRANSACTION_ANALYSIS NOT INCLUDED!)     ← VIEW doesn't need CTAS
+```
+
+**Target Execution**:
+
+```sql
+-- Step 1: sp_execute_target_ddl creates all structures
+CREATE TABLE DEV_DB.MART_INVESTMENTS_BOLT.FACT_TRANSACTIONS (...);  -- Empty table
+CREATE TABLE DEV_DB.MART_INVESTMENTS_BOLT.DIM_STOCKS (...);         -- Empty table
+CREATE VIEW DEV_DB.MART_INVESTMENTS_BOLT.VW_TRANSACTION_ANALYSIS AS -- View with logic
+    SELECT t.*, s.stock_name
+    FROM DEV_DB.MART_INVESTMENTS_BOLT.FACT_TRANSACTIONS t
+    JOIN DEV_DB.MART_INVESTMENTS_BOLT.DIM_STOCKS s ON t.stock_id = s.stock_id;
+
+-- Step 2: sp_execute_target_ctas populates ONLY tables
+CREATE OR REPLACE TABLE ... FACT_TRANSACTIONS AS SELECT * FROM SHARED...;
+CREATE OR REPLACE TABLE ... DIM_STOCKS AS SELECT * FROM SHARED...;
+-- VW_TRANSACTION_ANALYSIS skipped - already functional after DDL!
+```
+
+**Result**: VIEW works immediately after DDL, querying the newly populated TABLEs.
+
+### Warehouse Sizing Requirements
+
+#### Source Account (IMCUST) - Lightweight Operations
+
+**Operations**:
+- GET_LINEAGE queries (metadata only)
+- GET_DDL extraction (metadata only)
+- Metadata table insertions
+- Share and permission creation
+
+**Recommended Warehouse**: `XSMALL` or `SMALL`
+
+```sql
+-- Source warehouse - minimal compute needed
+USE WAREHOUSE ADMIN_WH;  -- XSMALL sufficient
+CALL sp_orchestrate_migration(...);  -- Completes in seconds
+```
+
+**Typical Execution**: 1-3 minutes, ~0.03 credits
+
+#### Target Account (IMSDLC) - Data-Intensive Operations
+
+**Operations**:
+- DDL execution (fast, metadata only)
+- **CTAS execution (data-intensive!)**: Full table scans + writes for ALL tables
+
+**Recommended Warehouse**: `MEDIUM` to `LARGE` (or larger for big datasets)
+
+```sql
+-- Target warehouse - sized for data volume
+USE WAREHOUSE MIGRATION_WH;
+ALTER WAREHOUSE MIGRATION_WH SET WAREHOUSE_SIZE = 'LARGE';
+
+CALL sp_execute_full_migration(...);  -- Data copying happens here
+```
+
+**Warehouse Sizing Guide**:
+
+| Data Volume | Warehouse Size | Estimated Cost | Typical Duration |
+|-------------|----------------|----------------|------------------|
+| < 1 GB | SMALL | ~0.1 credits | 2-5 minutes |
+| 1-50 GB | MEDIUM | ~0.5 credits | 5-15 minutes |
+| 50-200 GB | LARGE | ~2-3 credits | 15-30 minutes |
+| 200-500 GB | XLARGE | ~5-8 credits | 30-60 minutes |
+| > 500 GB | XXLARGE+ | Varies | 1+ hours |
+
+**Cost Breakdown Example** (50 GB migration):
+
+| Account | Operation | Warehouse | Time | Credits |
+|---------|-----------|-----------|------|---------|
+| IMCUST | Metadata extraction | XSMALL | 2 min | 0.03 |
+| IMSDLC | DDL execution | MEDIUM | 1 min | 0.07 |
+| IMSDLC | **CTAS (data copy)** | LARGE | 20 min | **2.67** |
+| | | | **Total** | **~2.77** |
+
+**Key Insight**: 95%+ of compute cost is in target-side CTAS operations!
+
+**Optimization Tips**:
+
+```sql
+-- 1. Use auto-suspend on source (operations are quick)
+ALTER WAREHOUSE ADMIN_WH SET AUTO_SUSPEND = 60;  -- 1 minute
+
+-- 2. Size up target warehouse for migration window
+ALTER WAREHOUSE MIGRATION_WH SET
+    WAREHOUSE_SIZE = 'LARGE'
+    AUTO_SUSPEND = 300;  -- 5 minutes (migration takes time)
+
+-- 3. Run migration
+CALL sp_execute_full_migration(...);
+
+-- 4. Manually suspend after completion
+ALTER WAREHOUSE MIGRATION_WH SUSPEND;
+```
+
+## Recent Fixes
+
+### Fix 1: Cross-Schema Dependencies (2025-11-10)
+- ✅ System now captures `SOURCE_OBJECT_SCHEMA` from GET_LINEAGE
+- ✅ Objects created in correct target schemas (e.g., SRC_INVESTMENTS_BOLT → SRC_INVESTMENTS_BOLT)
+- ✅ CTAS scripts preserve schema mapping
+- ✅ Share grants include USAGE on all involved schemas
+
+### Fix 2: Requested Objects Always Included (2025-11-11)
+- ✅ Objects with zero dependencies are now included in migration
+- ✅ Requested objects explicitly added with `dependency_level = 0`
+- ✅ Automatic TABLE/VIEW type detection
+- ✅ Enhanced reporting shows breakdown of requested vs. dependent objects
+
+**See [CROSS_SCHEMA_FIX_SUMMARY.md](CROSS_SCHEMA_FIX_SUMMARY.md) for complete details**
 
 ## Future Enhancements
 
@@ -193,4 +362,3 @@ WHERE migration_id = 1 AND status = 'FAILED';
 - Support for procedures and functions (currently tables/views only)
 - Parallel execution for independent objects
 - Rollback capability
-- Cross-schema migrations
