@@ -54,36 +54,74 @@ $$
             var query_id = null;
             var confidence_score = 0.0;
 
-            // Strategy 1: Look for INSERT INTO statements (highest confidence)
-            var insert_query_sql = `
+            // Strategy 1: Look for MERGE statements FIRST (highest priority - most complete transformation)
+            // MERGE statements often contain the full transformation logic including updates
+            var merge_query_sql = `
                 SELECT
                     query_id,
                     query_text,
                     start_time
                 FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                WHERE query_text ILIKE '%INSERT%INTO%${obj_name}%'
-                  AND query_text ILIKE '%SELECT%'
+                WHERE query_text ILIKE 'MERGE INTO ${obj_name} %'
+                   OR query_text ILIKE 'MERGE INTO ${obj_name}\\n%'
+                   OR query_text ILIKE 'MERGE INTO ${obj_name}\\r%'
                   AND database_name = '${src_database}'
                   AND schema_name = '${src_schema}'
                   AND execution_status = 'SUCCESS'
-                  AND query_type IN ('INSERT', 'MERGE')
+                  AND query_type = 'MERGE'
                 ORDER BY start_time DESC
                 LIMIT 1
             `;
 
             try {
-                var insert_result = snowflake.execute({sqlText: insert_query_sql});
-                if (insert_result.next()) {
-                    transformation_sql = insert_result.getColumnValue('QUERY_TEXT');
-                    query_id = insert_result.getColumnValue('QUERY_ID');
-                    capture_method = 'QUERY_HISTORY_INSERT';
+                var merge_result = snowflake.execute({sqlText: merge_query_sql});
+                if (merge_result.next()) {
+                    transformation_sql = merge_result.getColumnValue('QUERY_TEXT');
+                    query_id = merge_result.getColumnValue('QUERY_ID');
+                    capture_method = 'QUERY_HISTORY_MERGE';
                     confidence_score = 1.0;
                 }
             } catch (e) {
                 // Query history may not be accessible, continue
             }
 
-            // Strategy 2: Look for CREATE TABLE AS SELECT (if INSERT not found)
+            // Strategy 2: Look for INSERT INTO statements (if MERGE not found)
+            // Fix: Match INSERT INTO <table_name> more precisely to avoid matching wrong queries
+            // Use a more specific ILIKE pattern that ensures the table name comes right after "INSERT INTO"
+            // Pattern checks for "INSERT INTO <table_name>" followed by whitespace or newline (not in SELECT clause)
+            if (transformation_sql == null) {
+                var insert_query_sql = `
+                    SELECT
+                        query_id,
+                        query_text,
+                        start_time
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
+                    WHERE (query_text ILIKE 'INSERT INTO ${obj_name} %'
+                       OR query_text ILIKE 'INSERT INTO ${obj_name}\\n%'
+                       OR query_text ILIKE 'INSERT INTO ${obj_name}\\r%')
+                      AND query_text ILIKE '%SELECT%'
+                      AND database_name = '${src_database}'
+                      AND schema_name = '${src_schema}'
+                      AND execution_status = 'SUCCESS'
+                      AND query_type = 'INSERT'
+                    ORDER BY start_time DESC
+                    LIMIT 1
+                `;
+
+                try {
+                    var insert_result = snowflake.execute({sqlText: insert_query_sql});
+                    if (insert_result.next()) {
+                        transformation_sql = insert_result.getColumnValue('QUERY_TEXT');
+                        query_id = insert_result.getColumnValue('QUERY_ID');
+                        capture_method = 'QUERY_HISTORY_INSERT';
+                        confidence_score = 1.0;
+                    }
+                } catch (e) {
+                    // Query history may not be accessible, continue
+                }
+            }
+
+            // Strategy 3: Look for CREATE TABLE AS SELECT (if MERGE and INSERT not found)
             if (transformation_sql == null) {
                 var ctas_query_sql = `
                     SELECT
@@ -107,36 +145,6 @@ $$
                         query_id = ctas_result.getColumnValue('QUERY_ID');
                         capture_method = 'QUERY_HISTORY_CTAS';
                         confidence_score = 0.9;
-                    }
-                } catch (e) {
-                    // Continue
-                }
-            }
-
-            // Strategy 3: Look for MERGE statements
-            if (transformation_sql == null) {
-                var merge_query_sql = `
-                    SELECT
-                        query_id,
-                        query_text,
-                        start_time
-                    FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_HISTORY
-                    WHERE query_text ILIKE '%MERGE%INTO%${obj_name}%'
-                      AND database_name = '${src_database}'
-                      AND schema_name = '${src_schema}'
-                      AND execution_status = 'SUCCESS'
-                      AND query_type = 'MERGE'
-                    ORDER BY start_time DESC
-                    LIMIT 1
-                `;
-
-                try {
-                    var merge_result = snowflake.execute({sqlText: merge_query_sql});
-                    if (merge_result.next()) {
-                        transformation_sql = merge_result.getColumnValue('QUERY_TEXT');
-                        query_id = merge_result.getColumnValue('QUERY_ID');
-                        capture_method = 'QUERY_HISTORY_MERGE';
-                        confidence_score = 1.0;
                     }
                 } catch (e) {
                     // Continue

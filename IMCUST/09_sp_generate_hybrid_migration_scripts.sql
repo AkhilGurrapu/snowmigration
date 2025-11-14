@@ -106,12 +106,31 @@ $$
 
                     // Extract just the INSERT...SELECT or MERGE portion
                     // (remove CREATE TABLE if it's a CTAS)
-                    if (adapted_sql.toUpperCase().includes('CREATE TABLE')) {
+                    if (adapted_sql.toUpperCase().includes('CREATE') && adapted_sql.toUpperCase().includes('AS SELECT')) {
                         // Convert CTAS to INSERT INTO
-                        var select_part = adapted_sql.substring(adapted_sql.toUpperCase().indexOf(' AS SELECT') + 4);
-                        migration_script = `-- Original transformation from ${capture_method} (confidence: ${confidence})\\n`;
-                        migration_script += `INSERT INTO ${target_database}.${src_schema}.${obj_name}\\n`;
-                        migration_script += select_part;
+                        // Find the SELECT part after "AS SELECT" (case-insensitive)
+                        var upper_sql = adapted_sql.toUpperCase();
+                        var as_select_idx = upper_sql.indexOf('AS SELECT');
+                        if (as_select_idx > 0) {
+                            // Extract everything after "AS SELECT" (add 9 for "AS SELECT" length)
+                            var select_part = adapted_sql.substring(as_select_idx + 9).trim();
+                            migration_script = `-- Original transformation from ${capture_method} (confidence: ${confidence})\\n`;
+                            migration_script += `INSERT INTO ${target_database}.${src_schema}.${obj_name}\\n`;
+                            migration_script += `SELECT ${select_part}`;
+                        } else {
+                            // Fallback: try to find SELECT directly
+                            var select_idx = upper_sql.indexOf('SELECT');
+                            if (select_idx > 0) {
+                                var select_part = adapted_sql.substring(select_idx).trim();
+                                migration_script = `-- Original transformation from ${capture_method} (confidence: ${confidence})\\n`;
+                                migration_script += `INSERT INTO ${target_database}.${src_schema}.${obj_name}\\n`;
+                                migration_script += select_part;
+                            } else {
+                                // Can't convert, use as-is
+                                migration_script = `-- Original transformation from ${capture_method} (confidence: ${confidence})\\n`;
+                                migration_script += adapted_sql;
+                            }
+                        }
                     } else {
                         // Already an INSERT or MERGE - adapt database names AND fix INSERT INTO table name
                         migration_script = `-- Original transformation from ${capture_method} (confidence: ${confidence})\\n`;
@@ -124,6 +143,43 @@ $$
                         // Also handle MERGE INTO
                         var merge_pattern = new RegExp(`MERGE\\s+INTO\\s+${obj_name}\\s+`, 'gi');
                         adapted_sql = adapted_sql.replace(merge_pattern, `MERGE INTO ${target_table_name} `);
+                        
+                        // Fully qualify table references in FROM/JOIN clauses for tables in this migration
+                        // Get list of all migrated table names (case-insensitive)
+                        var get_migrated_tables_sql = `
+                            SELECT DISTINCT UPPER(object_name) as obj_name_upper, object_name, source_schema
+                            FROM ${database}.${admin_schema}.migration_share_objects
+                            WHERE migration_id = ${migration_id}
+                              AND object_type = 'TABLE'
+                        `;
+                        var migrated_tables_result = snowflake.execute({sqlText: get_migrated_tables_sql});
+                        var migrated_tables = [];
+                        while (migrated_tables_result.next()) {
+                            var table_name = migrated_tables_result.getColumnValue('OBJECT_NAME');
+                            var table_schema = migrated_tables_result.getColumnValue('SOURCE_SCHEMA');
+                            migrated_tables.push({
+                                name: table_name,
+                                upper: table_name.toUpperCase(),
+                                schema: table_schema,
+                                fqn: `${target_database}.${table_schema}.${table_name}`
+                            });
+                        }
+                        
+                        // Replace unqualified table references with fully qualified names
+                        // Pattern: FROM <table_name> or JOIN <table_name>
+                        for (var t = 0; t < migrated_tables.length; t++) {
+                            var table = migrated_tables[t];
+                            // Skip the target table itself (already fixed above)
+                            if (table.upper === obj_name.toUpperCase()) continue;
+                            
+                            // Replace FROM <table_name> with FROM <fully_qualified_name>
+                            var from_pattern = new RegExp(`(FROM|JOIN)\\s+${table.name}\\s+`, 'gi');
+                            adapted_sql = adapted_sql.replace(from_pattern, `$1 ${table.fqn} `);
+                            
+                            // Also handle table aliases: FROM <table_name> AS alias
+                            var from_as_pattern = new RegExp(`(FROM|JOIN)\\s+${table.name}\\s+AS\\s+`, 'gi');
+                            adapted_sql = adapted_sql.replace(from_as_pattern, `$1 ${table.fqn} AS `);
+                        }
                         
                         migration_script += adapted_sql;
                     }
