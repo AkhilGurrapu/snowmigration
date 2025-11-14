@@ -52,6 +52,35 @@ CREATE OR REPLACE TABLE PROD_DB.ADMIN_SCHEMA.migration_share_objects (
     object_type VARCHAR,
     fully_qualified_name VARCHAR,
     dependency_level NUMBER,  -- Distance from GET_LINEAGE (0=requested object, 1+=dependencies)
+    object_classification VARCHAR,  -- NEW: BASE_TABLE, DERIVED_TABLE, VIEW
+    created_ts TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- NEW: Table to store captured transformation SQL from query history and metadata
+CREATE OR REPLACE TABLE PROD_DB.ADMIN_SCHEMA.migration_transformation_sql (
+    migration_id NUMBER,
+    source_database VARCHAR,
+    source_schema VARCHAR,
+    object_name VARCHAR,
+    object_type VARCHAR,
+    transformation_sql VARCHAR,  -- Original INSERT/MERGE/CTAS SQL
+    capture_method VARCHAR,  -- QUERY_HISTORY, ACCESS_HISTORY, COMMENT, TAG, NONE
+    query_id VARCHAR,  -- Reference to source query (if from QUERY_HISTORY)
+    confidence_score NUMBER,  -- 1.0=exact match, 0.5=reconstructed, 0.0=fallback
+    created_ts TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+-- NEW: Table to store hybrid migration scripts (lineage-preserving approach)
+CREATE OR REPLACE TABLE PROD_DB.ADMIN_SCHEMA.migration_hybrid_scripts (
+    migration_id NUMBER,
+    source_database VARCHAR,
+    source_schema VARCHAR,
+    object_name VARCHAR,
+    object_type VARCHAR,
+    object_classification VARCHAR,
+    migration_strategy VARCHAR,  -- CTAS_FROM_SHARED, INSERT_WITH_TRANSFORMATION, VIEW_ONLY
+    migration_script VARCHAR,  -- The actual SQL to execute
+    execution_order NUMBER,
     created_ts TIMESTAMP_LTZ DEFAULT CURRENT_TIMESTAMP()
 );
 

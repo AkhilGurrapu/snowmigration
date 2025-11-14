@@ -54,7 +54,47 @@ $$
     deps_result.next();
     var deps_message = deps_result.getColumnValue(1);
 
-    // Step 2: Generate migration scripts (DDL + CTAS)
+    // Step 2: Classify objects (BASE_TABLE, DERIVED_TABLE, VIEW)
+    var call_classify = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_classify_migration_objects(?, ?, ?)`;
+    stmt = snowflake.createStatement({
+        sqlText: call_classify,
+        binds: [migration_id, P_SOURCE_DATABASE, P_ADMIN_SCHEMA]
+    });
+    var classify_result = stmt.execute();
+    classify_result.next();
+    var classify_message = classify_result.getColumnValue(1);
+
+    // Step 3: Capture transformation SQL from query history (365-day retention)
+    var call_capture = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_capture_transformation_sql_enhanced(?, ?, ?)`;
+    stmt = snowflake.createStatement({
+        sqlText: call_capture,
+        binds: [migration_id, P_SOURCE_DATABASE, P_ADMIN_SCHEMA]
+    });
+    var capture_result = stmt.execute();
+    capture_result.next();
+    var capture_message = capture_result.getColumnValue(1);
+
+    // Step 4: Extract lineage from metadata (fallback for objects without query history)
+    var call_extract = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_extract_lineage_from_metadata(?, ?, ?)`;
+    stmt = snowflake.createStatement({
+        sqlText: call_extract,
+        binds: [migration_id, P_SOURCE_DATABASE, P_ADMIN_SCHEMA]
+    });
+    var extract_result = stmt.execute();
+    extract_result.next();
+    var extract_message = extract_result.getColumnValue(1);
+
+    // Step 5: Generate hybrid migration scripts (LINEAGE PRESERVING!)
+    var call_hybrid = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_generate_hybrid_migration_scripts(?, ?, ?, ?)`;
+    stmt = snowflake.createStatement({
+        sqlText: call_hybrid,
+        binds: [migration_id, P_SOURCE_DATABASE, P_TARGET_DATABASE, P_ADMIN_SCHEMA]
+    });
+    var hybrid_result = stmt.execute();
+    hybrid_result.next();
+    var hybrid_message = hybrid_result.getColumnValue(1);
+
+    // Step 6: Generate legacy migration scripts (DDL + CTAS) - for backward compatibility
     // Note: p_target_schema parameter exists but is NOT used for schema mapping
     // Schema mapping is automatic based on source_schema from migration_share_objects
     var call_scripts = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_generate_migration_scripts(?, ?, ?)`;
@@ -66,7 +106,7 @@ $$
     scripts_result.next();
     var scripts_message = scripts_result.getColumnValue(1);
 
-    // Step 3: Setup data share with database role
+    // Step 7: Setup data share with database role
     var call_share = `CALL ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.sp_setup_data_share(?, ?, ?, ?, ?, ?)`;
     stmt = snowflake.createStatement({
         sqlText: call_share,
@@ -84,7 +124,7 @@ $$
     });
     stmt.execute();
 
-    return `Migration ID: ${migration_id}\n${deps_message}\n${scripts_message}\n${share_message}`;
+    return `Migration ID: ${migration_id}\n\n${deps_message}\n\n${classify_message}\n\n${capture_message}\n\n${extract_message}\n\n${hybrid_message}\n\n${scripts_message}\n\n${share_message}`;
 $$;
 
 -- Test that procedure was created
