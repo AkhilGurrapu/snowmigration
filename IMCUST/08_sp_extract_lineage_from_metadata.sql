@@ -60,14 +60,17 @@ $$
             var confidence_score = 0.0;
 
             // Strategy 1: Check for TRANSFORMATION_SQL tag
+            // Use SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES instead of INFORMATION_SCHEMA
+            // to avoid "Requested information on the current user is not accessible" error
             try {
                 var tag_sql = `
                     SELECT TAG_VALUE
-                    FROM TABLE(INFORMATION_SCHEMA.TAG_REFERENCES(
-                        '${fqn}',
-                        'TABLE'
-                    ))
-                    WHERE TAG_NAME = 'TRANSFORMATION_SQL'
+                    FROM SNOWFLAKE.ACCOUNT_USAGE.TAG_REFERENCES
+                    WHERE OBJECT_DATABASE = '${src_database}'
+                      AND OBJECT_SCHEMA = '${src_schema}'
+                      AND OBJECT_NAME = '${obj_name}'
+                      AND TAG_NAME = 'TRANSFORMATION_SQL'
+                    LIMIT 1
                 `;
                 var tag_result = snowflake.execute({sqlText: tag_sql});
                 if (tag_result.next()) {
@@ -76,7 +79,7 @@ $$
                     confidence_score = 0.8;
                 }
             } catch (e) {
-                // Tag doesn't exist, continue
+                // Tag doesn't exist or ACCOUNT_USAGE not available, continue
             }
 
             // Strategy 2: Check table COMMENT for SQL
@@ -153,15 +156,16 @@ $$
             if (transformation_sql == null) {
                 try {
                     // Get upstream dependencies from migration_share_objects
+                    // Fix: Use MAX() to ensure subquery returns single row (handles case differences)
                     var deps_sql = `
                         SELECT object_name, fully_qualified_name
                         FROM ${database}.${admin_schema}.migration_share_objects
                         WHERE migration_id = ${migration_id}
                           AND dependency_level > (
-                              SELECT dependency_level
+                              SELECT MAX(dependency_level)
                               FROM ${database}.${admin_schema}.migration_share_objects
                               WHERE migration_id = ${migration_id}
-                                AND object_name = '${obj_name}'
+                                AND UPPER(object_name) = UPPER('${obj_name}')
                           )
                         ORDER BY dependency_level DESC
                         LIMIT 5

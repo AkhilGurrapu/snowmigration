@@ -38,18 +38,38 @@ $$
         var failed_count = 0;
         var skipped_count = 0;
 
+        // Track executed objects to prevent duplicates (case-insensitive)
+        var executed_objects = new Set();
+
         // Get all hybrid migration scripts ordered by execution_order (highest first)
+        // Deduplicate by source_schema + UPPER(object_name) to handle case differences
         var get_scripts_sql = `
-            SELECT
+            SELECT 
                 source_schema,
+                UPPER(object_name) as object_name_upper,
                 object_name,
                 object_type,
                 object_classification,
                 migration_strategy,
                 migration_script,
                 execution_order
-            FROM ${shared_db}.${shared_schema}.migration_hybrid_scripts
-            WHERE migration_id = ${migration_id}
+            FROM (
+                SELECT 
+                    source_schema,
+                    object_name,
+                    object_type,
+                    object_classification,
+                    migration_strategy,
+                    migration_script,
+                    execution_order,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY source_schema, UPPER(object_name)
+                        ORDER BY execution_order DESC, object_name
+                    ) as rn
+                FROM ${shared_db}.${shared_schema}.migration_hybrid_scripts
+                WHERE migration_id = ${migration_id}
+            )
+            WHERE rn = 1
             ORDER BY execution_order DESC, object_name
         `;
 
@@ -57,12 +77,21 @@ $$
 
         while (scripts.next()) {
             var src_schema = scripts.getColumnValue('SOURCE_SCHEMA');
+            var obj_name_upper = scripts.getColumnValue('OBJECT_NAME_UPPER');
             var obj_name = scripts.getColumnValue('OBJECT_NAME');
             var obj_type = scripts.getColumnValue('OBJECT_TYPE');
             var obj_class = scripts.getColumnValue('OBJECT_CLASSIFICATION');
             var strategy = scripts.getColumnValue('MIGRATION_STRATEGY');
             var script = scripts.getColumnValue('MIGRATION_SCRIPT');
             var exec_order = scripts.getColumnValue('EXECUTION_ORDER');
+
+            // Skip if already executed (case-insensitive check)
+            var object_key = src_schema + '.' + obj_name_upper;
+            if (executed_objects.has(object_key)) {
+                skipped_count++;
+                continue;
+            }
+            executed_objects.add(object_key);
 
             var start_time = Date.now();
             var status = 'SUCCESS';
