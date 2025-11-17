@@ -113,20 +113,48 @@ $$
                 var ref_obj_schema = all_objects.getColumnValue('SOURCE_SCHEMA');
                 var qualified_name = `${P_TARGET_DATABASE}.${ref_obj_schema}.${ref_obj_name}`;
 
-                // Pattern to match unqualified references in FROM/JOIN clauses
-                // Matches: FROM table_name, JOIN table_name, from table_name, join table_name
-                // But NOT: FROM db.schema.table_name (already qualified)
+                // Escape object name for regex
+                var escaped_obj_name = ref_obj_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-                // Match: FROM/JOIN followed by whitespace, then object_name, then whitespace or alias
-                // Negative lookbehind: not preceded by a dot (which would mean it's qualified)
-                var unqualified_pattern = new RegExp(
-                    '(from|join|,)\\s+(?!' + P_TARGET_DATABASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.)(' +
-                    ref_obj_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\s+',
-                    'gi'
-                );
+                // Pattern to match unqualified references
+                // Matches word boundary + object_name + word boundary
+                var search_regex = new RegExp('\\b' + escaped_obj_name + '\\b', 'gi');
 
-                // Replace with fully qualified name
-                target_ddl = target_ddl.replace(unqualified_pattern, `$1 ${qualified_name} `);
+                // Find all matches and their positions
+                var match;
+                var replacements = [];
+
+                while ((match = search_regex.exec(target_ddl)) !== null) {
+                    var match_index = match.index;
+                    var match_text = match[0];
+
+                    // Get context before the match (up to 50 chars)
+                    var before_start = Math.max(0, match_index - 50);
+                    var before_text = target_ddl.substring(before_start, match_index);
+
+                    // Check if already qualified (preceded by a dot)
+                    if (before_text.match(/\.\s*$/)) {
+                        continue; // Skip - already qualified as schema.object or db.schema.object
+                    }
+
+                    // Check if in FROM/JOIN/comma context
+                    if (before_text.match(/(from|join|,)\s+$/i)) {
+                        // This is an unqualified reference that needs qualification
+                        replacements.push({
+                            index: match_index,
+                            length: match_text.length,
+                            replacement: qualified_name
+                        });
+                    }
+                }
+
+                // Apply replacements in reverse order to preserve indices
+                for (var r = replacements.length - 1; r >= 0; r--) {
+                    var repl = replacements[r];
+                    target_ddl = target_ddl.substring(0, repl.index) +
+                                repl.replacement +
+                                target_ddl.substring(repl.index + repl.length);
+                }
             }
 
             if (obj_type === 'VIEW') {
