@@ -23,8 +23,6 @@ $$
     var success_count = 0;
     var error_count = 0;
     var view_count = 0;
-    var success_objects = [];
-    var failed_objects = [];
 
     // Build the query to get DDL scripts (views only after Fix #1)
     var query = `
@@ -70,7 +68,6 @@ $$
             });
             log_stmt.execute();
             success_count++;
-            success_objects.push(`${object_name} (${object_type})`);
 
         } catch (err) {
             var end_time = Date.now();
@@ -87,37 +84,21 @@ $$
             });
             log_stmt.execute();
             error_count++;
-            failed_objects.push(`${object_name} (${object_type}): ${err.message}`);
         }
     }
 
-    // Build detailed output message
+    // Simplified output message
     var result_msg = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                           STEP 2: DDL EXECUTION (VIEWS ONLY)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📊 EXECUTION SUMMARY:
-   • Total View DDLs Executed: ${view_count}
-   • Successful: ${success_count}
-   • Failed: ${error_count}
+📊 Views Executed: ${view_count} | ✅ Success: ${success_count} | ❌ Failed: ${error_count}
 `;
 
-    if (success_count > 0) {
-        result_msg += `\n✅ SUCCESSFULLY CREATED VIEWS:\n`;
-        for (var i = 0; i < success_objects.length; i++) {
-            result_msg += `   • ${success_objects[i]}\n`;
-        }
-    }
-
     if (error_count > 0) {
-        result_msg += `\n❌ FAILED VIEWS:\n`;
-        for (var i = 0; i < failed_objects.length; i++) {
-            result_msg += `   • ${failed_objects[i]}\n`;
-        }
+        result_msg += `\n⚠️  Check ${P_TARGET_DATABASE}.${P_ADMIN_SCHEMA}.migration_execution_log for error details`;
     }
-
-    result_msg += `\n📋 Detailed logs: ${P_TARGET_DATABASE}.${P_ADMIN_SCHEMA}.migration_execution_log`;
 
     return result_msg;
 $$;

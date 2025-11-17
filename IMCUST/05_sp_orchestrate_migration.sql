@@ -84,62 +84,51 @@ $$
     });
     stmt.execute();
 
-    // Get object counts by type and schema
-    var get_stats = `
+    // Get summary counts
+    var get_counts = `
         SELECT
-            source_schema,
-            object_type,
-            COUNT(*) as obj_count,
-            MIN(dependency_level) as min_level,
-            MAX(dependency_level) as max_level
+            COUNT(*) as total_objects,
+            SUM(CASE WHEN object_type = 'TABLE' THEN 1 ELSE 0 END) as table_count,
+            SUM(CASE WHEN object_type = 'VIEW' THEN 1 ELSE 0 END) as view_count,
+            COUNT(DISTINCT source_schema) as schema_count
         FROM ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.migration_share_objects
         WHERE migration_id = ?
-        GROUP BY source_schema, object_type
-        ORDER BY source_schema, object_type
     `;
     stmt = snowflake.createStatement({
-        sqlText: get_stats,
+        sqlText: get_counts,
         binds: [migration_id]
     });
-    var stats = stmt.execute();
+    var counts = stmt.execute();
+    counts.next();
 
-    var schema_breakdown = '';
-    while (stats.next()) {
-        var schema = stats.getColumnValue('SOURCE_SCHEMA');
-        var type = stats.getColumnValue('OBJECT_TYPE');
-        var count = stats.getColumnValue('OBJ_COUNT');
-        schema_breakdown += `   • ${schema}.${type}: ${count}\n`;
-    }
+    var total_objs = counts.getColumnValue('TOTAL_OBJECTS');
+    var tables = counts.getColumnValue('TABLE_COUNT');
+    var views = counts.getColumnValue('VIEW_COUNT');
+    var schemas = counts.getColumnValue('SCHEMA_COUNT');
 
-    // Build detailed output message
+    // Simplified output message
     var result_msg = `
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                   SOURCE-SIDE MIGRATION ORCHESTRATION                         ║
+║                   SOURCE-SIDE MIGRATION COMPLETED                             ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
-🆔 MIGRATION ID: ${migration_id}
+🆔 Migration ID: ${migration_id}
 
-📦 SOURCE CONFIGURATION:
-   • Database: ${P_SOURCE_DATABASE}
-   • Initial Schema: ${P_SOURCE_SCHEMA}
-   • Admin Schema: ${P_ADMIN_SCHEMA}
-   • Requested Objects: ${P_OBJECT_LIST.length}
-
-🎯 TARGET CONFIGURATION:
-   • Database: ${P_TARGET_DATABASE}
-   • Account: ${P_TARGET_ACCOUNT}
-   • Share Name: ${P_SHARE_NAME}
+📦 Configuration:
+   • Source: ${P_SOURCE_DATABASE}.${P_SOURCE_SCHEMA} → Target: ${P_TARGET_DATABASE}
+   • Share: ${P_SHARE_NAME} → Account: ${P_TARGET_ACCOUNT}
+   • Requested: ${P_OBJECT_LIST.length} objects
 
 ${deps_message}
 
-📂 OBJECT BREAKDOWN BY SCHEMA:
-${schema_breakdown}
+📊 Objects by Type:
+   • Tables: ${tables} | Views: ${views} | Schemas: ${schemas} | Total: ${total_objs}
+
 ${scripts_message}
 
 ${share_message}
 
-✅ STATUS: Migration preparation completed successfully
-📋 Next Step: On target account, create shared database and run sp_execute_full_migration(${migration_id}, ...)
+📋 Next: Run sp_execute_full_migration(${migration_id}, ...) on target account
     `;
 
     return result_msg;

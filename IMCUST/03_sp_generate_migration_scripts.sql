@@ -137,25 +137,12 @@ SELECT * FROM <SHARED_DB_NAME>.${source_schema}.${obj_name};
         }
     }
 
-    // Detailed output message
+    // Simplified output message with counts only
     var result_msg = `
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                     MIGRATION SCRIPTS GENERATION SUMMARY                      ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-
-Migration ID: ${P_MIGRATION_ID}
-Target Database: ${P_TARGET_DATABASE}
-
-📊 OBJECTS PROCESSED:
-   • Total Objects: ${table_count + view_count}
-   • Tables: ${table_count}
-   • Views: ${view_count}
-
 📝 SCRIPTS GENERATED:
-   • View DDL Scripts: ${ddl_count} (for views only - tables use CTAS)
-   • CTAS Scripts: ${ctas_count} (for data migration)
-
-✅ RESULT: ${ddl_count} view DDLs + ${ctas_count} CTAS scripts ready for migration
+   • View DDL Scripts: ${ddl_count} (views only - tables use CTAS)
+   • CTAS Scripts: ${ctas_count} (data migration)
+   • Total Objects: ${table_count + view_count} (${table_count} tables, ${view_count} views)
     `;
 
     return result_msg;

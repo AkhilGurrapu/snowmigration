@@ -53,8 +53,6 @@ DECLARE
     v_schema_name VARCHAR;
     v_query_sql VARCHAR;
     v_ctas_results RESULTSET;
-    v_success_list VARCHAR DEFAULT '';
-    v_failed_list VARCHAR DEFAULT '';
     v_total_count NUMBER DEFAULT 0;
 BEGIN
     -- Build dynamic query to fetch CTAS scripts
@@ -116,7 +114,6 @@ BEGIN
                     'VALUES (' || :p_migration_id || ', ''CTAS_EXECUTION'', ''' || :v_object_name || ''', ''CTAS'', ''' ||
                     REPLACE(:v_final_script, '''', '''''') || ''', ''SUCCESS'', 0)';
                 v_success_count := v_success_count + 1;
-                v_success_list := v_success_list || '   • ' || :v_schema_name || '.' || :v_object_name || ' (TABLE)' || CHR(10);
             ELSE
                 -- Table doesn't exist, log as failed
                 EXECUTE IMMEDIATE 'INSERT INTO ' || :p_target_database || '.' || :p_admin_schema ||
@@ -124,7 +121,6 @@ BEGIN
                     'VALUES (' || :p_migration_id || ', ''CTAS_EXECUTION'', ''' || :v_object_name || ''', ''CTAS'', ''' ||
                     REPLACE(:v_final_script, '''', '''''') || ''', ''FAILED'', ''Table not found after CTAS execution'', 0)';
                 v_error_count := v_error_count + 1;
-                v_failed_list := v_failed_list || '   • ' || :v_schema_name || '.' || :v_object_name || ': Table not found after CTAS' || CHR(10);
             END IF;
         EXCEPTION
             WHEN OTHER THEN
@@ -134,33 +130,21 @@ BEGIN
                     'VALUES (' || :p_migration_id || ', ''CTAS_EXECUTION'', ''' || :v_object_name || ''', ''CTAS'', ''' ||
                     REPLACE(:v_final_script, '''', '''''') || ''', ''FAILED'', ''' || REPLACE(SQLERRM, '''', '''''') || ''', 0)';
                 v_error_count := v_error_count + 1;
-                v_failed_list := v_failed_list || '   • ' || :v_schema_name || '.' || :v_object_name || ': ' || SQLERRM || CHR(10);
         END;
     END FOR;
 
-    -- Build detailed output message
+    -- Simplified output message
     LET v_result_msg VARCHAR := '
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                      STEP 1: CTAS EXECUTION (TABLES WITH DATA)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📊 EXECUTION SUMMARY:
-   • Total Tables Migrated: ' || v_total_count || '
-   • Successful: ' || v_success_count || '
-   • Failed: ' || v_error_count || '
-   • Execution Method: Parallel (ASYNC/AWAIT)
-
+📊 Tables Migrated: ' || v_total_count || ' | ✅ Success: ' || v_success_count || ' | ❌ Failed: ' || v_error_count || ' | Method: Parallel (ASYNC)
 ';
 
-    IF (v_success_count > 0) THEN
-        v_result_msg := v_result_msg || '✅ SUCCESSFULLY CREATED TABLES:' || CHR(10) || v_success_list;
-    END IF;
-
     IF (v_error_count > 0) THEN
-        v_result_msg := v_result_msg || CHR(10) || '❌ FAILED TABLES:' || CHR(10) || v_failed_list;
+        v_result_msg := v_result_msg || CHR(10) || '⚠️  Check ' || :p_target_database || '.' || :p_admin_schema || '.migration_execution_log for error details';
     END IF;
-
-    v_result_msg := v_result_msg || CHR(10) || '📋 Detailed logs: ' || :p_target_database || '.' || :p_admin_schema || '.migration_execution_log';
 
     RETURN v_result_msg;
 END;
