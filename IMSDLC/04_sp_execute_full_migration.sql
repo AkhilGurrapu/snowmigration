@@ -23,24 +23,26 @@ $$
 DECLARE
     ddl_result VARCHAR;
     ctas_result VARCHAR;
-    validation_msg VARCHAR DEFAULT '';
+    header_msg VARCHAR;
+    final_result VARCHAR;
 BEGIN
-    -- Step 1: Simple validation message
-    validation_msg := 'Starting migration ' || :p_migration_id || ' from shared database ' ||
-                      :p_shared_database || CHR(10);
+    -- Build header message
+    header_msg := '
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                   TARGET-SIDE MIGRATION EXECUTION                             ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
 
-    -- Step 3: Execute DDL scripts
-    CALL sp_execute_target_ddl(
-        :p_migration_id,
-        :p_shared_database,
-        :p_shared_schema,
-        :p_target_database,
-        :p_admin_schema
-    ) INTO :ddl_result;
+🆔 MIGRATION ID: ' || :p_migration_id || '
+📦 SHARED DATABASE: ' || :p_shared_database || '
+🎯 TARGET DATABASE: ' || :p_target_database || '
 
-    -- Step 4: Execute CTAS scripts
-    validation_msg := validation_msg || 'Proceeding with CTAS data migration.' || CHR(10);
+🔄 EXECUTION PLAN:
+   Step 1: Execute CTAS scripts (create tables with data)
+   Step 2: Execute DDL scripts (create views only)
 
+' || CHR(10);
+
+    -- FIX #3: Execute CTAS FIRST (creates tables with data)
     CALL sp_execute_target_ctas(
         :p_migration_id,
         :p_shared_database,
@@ -49,7 +51,26 @@ BEGIN
         :p_admin_schema
     ) INTO :ctas_result;
 
-    RETURN :validation_msg || :ddl_result || CHR(10) || :ctas_result;
+    -- Then execute DDL for VIEWS ONLY (after tables exist)
+    CALL sp_execute_target_ddl(
+        :p_migration_id,
+        :p_shared_database,
+        :p_shared_schema,
+        :p_target_database,
+        :p_admin_schema
+    ) INTO :ddl_result;
+
+    -- Build final result message
+    final_result := :header_msg || :ctas_result || CHR(10) || CHR(10) || :ddl_result || CHR(10) ||
+        '
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                         MIGRATION COMPLETED                                   ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+✅ Check ' || :p_target_database || '.' || :p_admin_schema || '.migration_execution_log for detailed logs
+    ';
+
+    RETURN :final_result;
 END;
 $$;
 

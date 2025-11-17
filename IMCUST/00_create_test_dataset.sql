@@ -257,31 +257,110 @@ GROUP BY ca.account_id, t.stock_id
 HAVING total_shares_owned > 0;
 
 -- ============================================
--- VIEWS (Complex dependencies across schemas)
+-- INTERMEDIATE VIEWS - Layer 1 (Query base tables)
 -- ============================================
+-- These views sit between base tables and final views
+-- They will be discovered as UPSTREAM DEPENDENCIES by GET_LINEAGE
 
--- View 1: Transaction analysis (references both schemas)
-CREATE OR REPLACE VIEW vw_transaction_analysis AS
+-- Intermediate View 1: Enriched Transactions (base transaction data with calculations)
+CREATE OR REPLACE VIEW vw_enriched_transactions AS
 SELECT
     ft.fact_transaction_id,
     ft.transaction_date,
     ft.transaction_type,
-    ds.ticker,
-    ds.company_name,
-    ds.sector,
-    db.broker_name,
+    ft.stock_key,
+    ft.broker_key,
     ft.quantity,
     ft.price_per_share,
     ft.total_amount,
     ft.commission_amount,
     ft.net_amount,
-    dsp.daily_change_pct
-FROM fact_transactions ft
-JOIN dim_stocks ds ON ft.stock_key = ds.stock_key
-JOIN dim_brokers db ON ft.broker_key = db.broker_key
-LEFT JOIN daily_stock_performance dsp
-    ON ft.stock_key = dsp.stock_id
-    AND ft.transaction_date = dsp.price_date;
+    -- Add calculated fields
+    ROUND(ft.commission_amount / ft.total_amount * 100, 2) as commission_rate_pct,
+    CASE WHEN ft.transaction_type = 'BUY' THEN 1 ELSE -1 END as direction_multiplier
+FROM PROD_DB.MART_INVESTMENTS_BOLT.fact_transactions ft;
+
+-- Intermediate View 2: Stock Dimensions (enriched stock data from both schemas)
+CREATE OR REPLACE VIEW vw_stock_dimensions AS
+SELECT
+    ds.stock_key,
+    ds.ticker,
+    ds.company_name,
+    ds.sector,
+    ds.is_current,
+    -- Cross-schema join to SRC for additional stock info
+    sm.stock_id as source_stock_id,
+    sm.ipo_date
+FROM PROD_DB.MART_INVESTMENTS_BOLT.dim_stocks ds
+LEFT JOIN PROD_DB.SRC_INVESTMENTS_BOLT.stock_master sm
+    ON ds.ticker = sm.ticker;
+
+-- Intermediate View 3: Broker Information (broker details with performance metrics)
+CREATE OR REPLACE VIEW vw_broker_info AS
+SELECT
+    db.broker_key,
+    db.broker_name,
+    db.commission_rate,
+    db.is_active,
+    -- Cross-schema reference to get broker master data
+    bm.broker_id as source_broker_id,
+    bm.contact_email
+FROM PROD_DB.MART_INVESTMENTS_BOLT.dim_brokers db
+LEFT JOIN PROD_DB.SRC_INVESTMENTS_BOLT.broker_master bm
+    ON db.broker_name = bm.broker_name;
+
+-- Intermediate View 4: Daily Performance Metrics
+CREATE OR REPLACE VIEW vw_daily_performance AS
+SELECT
+    dsp.stock_id,
+    dsp.price_date,
+    dsp.open_price,
+    dsp.close_price,
+    dsp.daily_change,
+    dsp.daily_change_pct,
+    dsp.volume
+FROM PROD_DB.MART_INVESTMENTS_BOLT.daily_stock_performance dsp;
+
+-- ============================================
+-- FINAL VIEWS - Layer 2 (Query intermediate views)
+-- ============================================
+-- These are the views you request in migration
+-- They depend on VIEWS (not tables), testing view-on-view dependencies
+
+-- View 1: Transaction Analysis (DEPENDS ON 3 INTERMEDIATE VIEWS)
+-- This view queries other VIEWS, not tables directly
+CREATE OR REPLACE VIEW vw_transaction_analysis AS
+SELECT
+    et.fact_transaction_id,
+    et.transaction_date,
+    et.transaction_type,
+    et.quantity,
+    et.price_per_share,
+    et.total_amount,
+    et.commission_amount,
+    et.net_amount,
+    et.commission_rate_pct,
+    -- From vw_stock_dimensions (VIEW dependency)
+    sd.ticker,
+    sd.company_name,
+    sd.sector,
+    sd.source_stock_id,
+    -- From vw_broker_info (VIEW dependency)
+    bi.broker_name,
+    bi.commission_rate as broker_commission_rate,
+    bi.is_active as broker_is_active,
+    bi.contact_email as broker_email,
+    -- From vw_daily_performance (VIEW dependency)
+    dp.daily_change_pct,
+    dp.volume
+FROM PROD_DB.MART_INVESTMENTS_BOLT.vw_enriched_transactions et
+JOIN PROD_DB.MART_INVESTMENTS_BOLT.vw_stock_dimensions sd
+    ON et.stock_key = sd.stock_key
+JOIN PROD_DB.MART_INVESTMENTS_BOLT.vw_broker_info bi
+    ON et.broker_key = bi.broker_key
+LEFT JOIN PROD_DB.MART_INVESTMENTS_BOLT.vw_daily_performance dp
+    ON et.stock_key = dp.stock_id
+    AND et.transaction_date = dp.price_date;
 
 -- View 2: Portfolio performance (complex multi-table join)
 CREATE OR REPLACE VIEW vw_portfolio_performance AS
@@ -310,6 +389,90 @@ JOIN PROD_DB.SRC_INVESTMENTS_BOLT.stock_prices_raw spr
         FROM PROD_DB.SRC_INVESTMENTS_BOLT.stock_prices_raw
         WHERE stock_id = ps.stock_id
     );
+
+-- ============================================
+-- ADDITIONAL VIEWS - Multi-Level View Dependencies
+-- ============================================
+-- These views create a dependency hierarchy to properly test:
+-- 1. View-depends-on-view scenarios
+-- 2. Dependency level ordering
+-- 3. Cross-schema references at multiple levels
+
+-- View 3: Stock Performance Summary (depends on SRC tables directly)
+-- This is a base-level view that other views will depend on
+CREATE OR REPLACE VIEW vw_stock_performance_summary AS
+SELECT
+    sm.stock_id,
+    sm.ticker,
+    sm.company_name,
+    sm.sector,
+    COUNT(DISTINCT spr.price_date) as trading_days,
+    MIN(spr.close_price) as min_price,
+    MAX(spr.close_price) as max_price,
+    AVG(spr.close_price) as avg_price,
+    ROUND(AVG(spr.volume), 0) as avg_volume
+FROM PROD_DB.SRC_INVESTMENTS_BOLT.stock_master sm
+LEFT JOIN PROD_DB.SRC_INVESTMENTS_BOLT.stock_prices_raw spr
+    ON sm.stock_id = spr.stock_id
+GROUP BY sm.stock_id, sm.ticker, sm.company_name, sm.sector;
+
+-- View 4: Trading Summary (depends on vw_transaction_analysis - VIEW-on-VIEW dependency)
+-- This tests that views can depend on other views
+CREATE OR REPLACE VIEW vw_trading_summary AS
+SELECT
+    ta.ticker,
+    ta.company_name,
+    ta.sector,
+    COUNT(*) as total_transactions,
+    SUM(CASE WHEN ta.transaction_type = 'BUY' THEN 1 ELSE 0 END) as buy_count,
+    SUM(CASE WHEN ta.transaction_type = 'SELL' THEN 1 ELSE 0 END) as sell_count,
+    SUM(ta.quantity) as total_quantity,
+    ROUND(AVG(ta.price_per_share), 2) as avg_price_per_share,
+    ROUND(SUM(ta.total_amount), 2) as total_amount,
+    ROUND(SUM(ta.commission_amount), 2) as total_commission,
+    ROUND(AVG(ta.daily_change_pct), 2) as avg_daily_change_pct
+FROM PROD_DB.MART_INVESTMENTS_BOLT.vw_transaction_analysis ta
+GROUP BY ta.ticker, ta.company_name, ta.sector;
+
+-- View 5: Final Dashboard (depends on MULTIPLE views - complex VIEW-on-VIEW dependencies)
+-- This is the top-level view that ties everything together
+CREATE OR REPLACE VIEW vw_final_investment_dashboard AS
+SELECT
+    ts.ticker,
+    ts.company_name,
+    ts.sector,
+    ts.total_transactions,
+    ts.buy_count,
+    ts.sell_count,
+    ts.avg_price_per_share,
+    ts.total_commission,
+    -- Cross-reference with stock performance summary
+    sps.trading_days,
+    sps.min_price,
+    sps.max_price,
+    sps.avg_price as market_avg_price,
+    sps.avg_volume as market_avg_volume,
+    -- Calculate performance metrics
+    ROUND(((ts.avg_price_per_share - sps.avg_price) / sps.avg_price) * 100, 2) as price_variance_pct
+FROM PROD_DB.MART_INVESTMENTS_BOLT.vw_trading_summary ts
+LEFT JOIN PROD_DB.MART_INVESTMENTS_BOLT.vw_stock_performance_summary sps
+    ON ts.ticker = sps.ticker;
+
+-- View 6: Portfolio Value Tracker (depends on vw_portfolio_performance - another VIEW-on-VIEW)
+-- This adds another branch to the view dependency tree
+CREATE OR REPLACE VIEW vw_portfolio_value_tracker AS
+SELECT
+    pp.customer_name,
+    pp.account_type,
+    COUNT(DISTINCT pp.ticker) as num_holdings,
+    ROUND(SUM(pp.total_invested), 2) as total_invested,
+    ROUND(SUM(pp.current_value), 2) as total_current_value,
+    ROUND(SUM(pp.unrealized_gain_loss), 2) as total_unrealized_gain_loss,
+    ROUND(AVG(pp.return_pct), 2) as avg_return_pct,
+    -- Add reference to broker from cross-schema
+    pp.broker_name
+FROM PROD_DB.MART_INVESTMENTS_BOLT.vw_portfolio_performance pp
+GROUP BY pp.customer_name, pp.account_type, pp.broker_name;
 
 -- ============================================
 -- Verification Queries

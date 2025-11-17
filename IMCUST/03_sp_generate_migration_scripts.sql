@@ -50,6 +50,8 @@ $$
 
     var ddl_count = 0;
     var ctas_count = 0;
+    var table_count = 0;
+    var view_count = 0;
 
     while (objects.next()) {
         var source_db = objects.getColumnValue('SOURCE_DATABASE');
@@ -85,18 +87,28 @@ $$
                 target_ddl = source_ddl.replace(view_pattern, `$1 ${target_fqn} `);
             }
 
-            // Store DDL scripts with dependency level from GET_LINEAGE distance
-            var insert_ddl = `
-                INSERT INTO migration_ddl_scripts
-                (migration_id, source_database, source_schema, object_name, object_type, dependency_level, source_ddl, target_ddl)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `;
-            stmt = snowflake.createStatement({
-                sqlText: insert_ddl,
-                binds: [P_MIGRATION_ID, source_db, source_schema, obj_name, obj_type, dep_level, source_ddl, target_ddl]
-            });
-            stmt.execute();
-            ddl_count++;
+            // FIX #2: Replace ALL occurrences of source database with target database in entire DDL
+            // This handles references inside view definitions like: FROM PROD_DB.SRC_INVESTMENTS_BOLT.table_name
+            var db_pattern = new RegExp(source_db, 'gi');
+            target_ddl = target_ddl.replace(db_pattern, P_TARGET_DATABASE);
+
+            // FIX #1: Only store DDL for VIEWS (tables will be created via CTAS)
+            if (obj_type === 'VIEW') {
+                var insert_ddl = `
+                    INSERT INTO migration_ddl_scripts
+                    (migration_id, source_database, source_schema, object_name, object_type, dependency_level, source_ddl, target_ddl)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `;
+                stmt = snowflake.createStatement({
+                    sqlText: insert_ddl,
+                    binds: [P_MIGRATION_ID, source_db, source_schema, obj_name, obj_type, dep_level, source_ddl, target_ddl]
+                });
+                stmt.execute();
+                ddl_count++;
+                view_count++;
+            } else {
+                table_count++;
+            }
 
             // Generate CTAS script for tables (not views)
             if (obj_type === 'TABLE') {
@@ -125,7 +137,28 @@ SELECT * FROM <SHARED_DB_NAME>.${source_schema}.${obj_name};
         }
     }
 
-    return `Generated ${ddl_count} DDL scripts and ${ctas_count} CTAS scripts`;
+    // Detailed output message
+    var result_msg = `
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                     MIGRATION SCRIPTS GENERATION SUMMARY                      ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+Migration ID: ${P_MIGRATION_ID}
+Target Database: ${P_TARGET_DATABASE}
+
+📊 OBJECTS PROCESSED:
+   • Total Objects: ${table_count + view_count}
+   • Tables: ${table_count}
+   • Views: ${view_count}
+
+📝 SCRIPTS GENERATED:
+   • View DDL Scripts: ${ddl_count} (for views only - tables use CTAS)
+   • CTAS Scripts: ${ctas_count} (for data migration)
+
+✅ RESULT: ${ddl_count} view DDLs + ${ctas_count} CTAS scripts ready for migration
+    `;
+
+    return result_msg;
 $$;
 
 -- Test that procedure was created

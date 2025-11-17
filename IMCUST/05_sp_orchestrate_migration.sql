@@ -84,7 +84,65 @@ $$
     });
     stmt.execute();
 
-    return `Migration ID: ${migration_id}\n${deps_message}\n${scripts_message}\n${share_message}`;
+    // Get object counts by type and schema
+    var get_stats = `
+        SELECT
+            source_schema,
+            object_type,
+            COUNT(*) as obj_count,
+            MIN(dependency_level) as min_level,
+            MAX(dependency_level) as max_level
+        FROM ${P_SOURCE_DATABASE}.${P_ADMIN_SCHEMA}.migration_share_objects
+        WHERE migration_id = ?
+        GROUP BY source_schema, object_type
+        ORDER BY source_schema, object_type
+    `;
+    stmt = snowflake.createStatement({
+        sqlText: get_stats,
+        binds: [migration_id]
+    });
+    var stats = stmt.execute();
+
+    var schema_breakdown = '';
+    while (stats.next()) {
+        var schema = stats.getColumnValue('SOURCE_SCHEMA');
+        var type = stats.getColumnValue('OBJECT_TYPE');
+        var count = stats.getColumnValue('OBJ_COUNT');
+        schema_breakdown += `   • ${schema}.${type}: ${count}\n`;
+    }
+
+    // Build detailed output message
+    var result_msg = `
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                   SOURCE-SIDE MIGRATION ORCHESTRATION                         ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+🆔 MIGRATION ID: ${migration_id}
+
+📦 SOURCE CONFIGURATION:
+   • Database: ${P_SOURCE_DATABASE}
+   • Initial Schema: ${P_SOURCE_SCHEMA}
+   • Admin Schema: ${P_ADMIN_SCHEMA}
+   • Requested Objects: ${P_OBJECT_LIST.length}
+
+🎯 TARGET CONFIGURATION:
+   • Database: ${P_TARGET_DATABASE}
+   • Account: ${P_TARGET_ACCOUNT}
+   • Share Name: ${P_SHARE_NAME}
+
+${deps_message}
+
+📂 OBJECT BREAKDOWN BY SCHEMA:
+${schema_breakdown}
+${scripts_message}
+
+${share_message}
+
+✅ STATUS: Migration preparation completed successfully
+📋 Next Step: On target account, create shared database and run sp_execute_full_migration(${migration_id}, ...)
+    `;
+
+    return result_msg;
 $$;
 
 -- Test that procedure was created

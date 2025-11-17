@@ -22,8 +22,11 @@ AS
 $$
     var success_count = 0;
     var error_count = 0;
+    var view_count = 0;
+    var success_objects = [];
+    var failed_objects = [];
 
-    // Build the query to get DDL scripts
+    // Build the query to get DDL scripts (views only after Fix #1)
     var query = `
         SELECT object_name, object_type, target_ddl, dependency_level
         FROM IDENTIFIER('${P_SHARED_DATABASE}.${P_SHARED_SCHEMA}.migration_ddl_scripts')
@@ -45,6 +48,10 @@ $$
         var dep_level = resultSet.getColumnValue('DEPENDENCY_LEVEL');
         var start_time = Date.now();
 
+        if (object_type === 'VIEW') {
+            view_count++;
+        }
+
         try {
             // Execute the DDL
             var ddl_stmt = snowflake.createStatement({sqlText: ddl_script});
@@ -63,6 +70,7 @@ $$
             });
             log_stmt.execute();
             success_count++;
+            success_objects.push(`${object_name} (${object_type})`);
 
         } catch (err) {
             var end_time = Date.now();
@@ -79,10 +87,39 @@ $$
             });
             log_stmt.execute();
             error_count++;
+            failed_objects.push(`${object_name} (${object_type}): ${err.message}`);
         }
     }
 
-    return `DDL Execution Complete: ${success_count} succeeded, ${error_count} failed. Check ${P_TARGET_DATABASE}.${P_ADMIN_SCHEMA}.migration_execution_log for details.`;
+    // Build detailed output message
+    var result_msg = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                          STEP 2: DDL EXECUTION (VIEWS ONLY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 EXECUTION SUMMARY:
+   • Total View DDLs Executed: ${view_count}
+   • Successful: ${success_count}
+   • Failed: ${error_count}
+`;
+
+    if (success_count > 0) {
+        result_msg += `\n✅ SUCCESSFULLY CREATED VIEWS:\n`;
+        for (var i = 0; i < success_objects.length; i++) {
+            result_msg += `   • ${success_objects[i]}\n`;
+        }
+    }
+
+    if (error_count > 0) {
+        result_msg += `\n❌ FAILED VIEWS:\n`;
+        for (var i = 0; i < failed_objects.length; i++) {
+            result_msg += `   • ${failed_objects[i]}\n`;
+        }
+    }
+
+    result_msg += `\n📋 Detailed logs: ${P_TARGET_DATABASE}.${P_ADMIN_SCHEMA}.migration_execution_log`;
+
+    return result_msg;
 $$;
 
 -- Test that procedure was created
