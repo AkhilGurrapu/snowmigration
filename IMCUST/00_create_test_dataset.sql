@@ -257,12 +257,75 @@ GROUP BY ca.account_id, t.stock_id
 HAVING total_shares_owned > 0;
 
 -- ============================================
--- INTERMEDIATE VIEWS - Layer 1 (Query base tables)
+-- SRC SCHEMA VIEWS - Base Layer (Query SRC tables)
 -- ============================================
--- These views sit between base tables and final views
--- They will be discovered as UPSTREAM DEPENDENCIES by GET_LINEAGE
+-- These views in SRC schema will be discovered as upstream dependencies
+-- They have UNQUALIFIED table references (same schema) to test Fix #2.1
 
--- Intermediate View 1: Enriched Transactions (base transaction data with calculations)
+USE SCHEMA SRC_INVESTMENTS_BOLT;
+
+-- SRC View 1: Stock Master Enhanced (unqualified references to test Fix #2.1)
+CREATE OR REPLACE VIEW vw_stock_master_enhanced AS
+SELECT
+    sm.stock_id,
+    sm.ticker,
+    sm.company_name,
+    sm.sector,
+    sm.industry,
+    sm.ipo_date,
+    -- Add price statistics from unqualified table reference
+    COUNT(spr.price_date) as trading_days,
+    AVG(spr.close_price) as avg_price,
+    MAX(spr.close_price) as max_price,
+    MIN(spr.close_price) as min_price
+FROM stock_master sm                    -- ❌ Unqualified (tests Fix #2.1)
+LEFT JOIN stock_prices_raw spr          -- ❌ Unqualified (tests Fix #2.1)
+    ON sm.stock_id = spr.stock_id
+GROUP BY sm.stock_id, sm.ticker, sm.company_name, sm.sector, sm.industry, sm.ipo_date;
+
+-- SRC View 2: Broker Master Enhanced (unqualified references)
+CREATE OR REPLACE VIEW vw_broker_master_enhanced AS
+SELECT
+    bm.broker_id,
+    bm.broker_name,
+    bm.contact_email,
+    bm.commission_rate,
+    -- Add account statistics from unqualified table reference
+    COUNT(DISTINCT ca.account_id) as total_accounts,
+    SUM(ca.balance) as total_balance_managed
+FROM broker_master bm                   -- ❌ Unqualified (tests Fix #2.1)
+LEFT JOIN customer_accounts ca          -- ❌ Unqualified (tests Fix #2.1)
+    ON bm.broker_id = ca.broker_id
+GROUP BY bm.broker_id, bm.broker_name, bm.contact_email, bm.commission_rate;
+
+-- SRC View 3: Transaction Metrics (unqualified references)
+CREATE OR REPLACE VIEW vw_transaction_metrics AS
+SELECT
+    tr.transaction_id,
+    tr.transaction_date,
+    tr.transaction_type,
+    tr.broker_id,
+    tr.stock_id,
+    tr.quantity,
+    tr.price_per_share,
+    tr.total_amount,
+    -- Cross-reference with stock master
+    sm.ticker,
+    sm.company_name,
+    sm.sector
+FROM transactions_raw tr                -- ❌ Unqualified (tests Fix #2.1)
+JOIN stock_master sm                    -- ❌ Unqualified (tests Fix #2.1)
+    ON tr.stock_id = sm.stock_id;
+
+USE SCHEMA MART_INVESTMENTS_BOLT;
+
+-- ============================================
+-- MART INTERMEDIATE VIEWS - Layer 2 (Query MART tables + SRC views)
+-- ============================================
+-- These views reference SRC VIEWS (cross-schema view dependencies)
+-- This creates: MART views → SRC views → SRC tables dependency chain
+
+-- Intermediate View 1: Enriched Transactions (now references SRC view)
 CREATE OR REPLACE VIEW vw_enriched_transactions AS
 SELECT
     ft.fact_transaction_id,
@@ -280,7 +343,7 @@ SELECT
     CASE WHEN ft.transaction_type = 'BUY' THEN 1 ELSE -1 END as direction_multiplier
 FROM PROD_DB.MART_INVESTMENTS_BOLT.fact_transactions ft;
 
--- Intermediate View 2: Stock Dimensions (enriched stock data from both schemas)
+-- Intermediate View 2: Stock Dimensions (now references SRC VIEW instead of table)
 CREATE OR REPLACE VIEW vw_stock_dimensions AS
 SELECT
     ds.stock_key,
@@ -288,26 +351,31 @@ SELECT
     ds.company_name,
     ds.sector,
     ds.is_current,
-    -- Cross-schema join to SRC for additional stock info
-    sm.stock_id as source_stock_id,
-    sm.ipo_date
+    -- Cross-schema reference to SRC VIEW (not table directly)
+    sme.stock_id as source_stock_id,
+    sme.ipo_date,
+    sme.industry,
+    sme.avg_price,
+    sme.trading_days
 FROM PROD_DB.MART_INVESTMENTS_BOLT.dim_stocks ds
-LEFT JOIN PROD_DB.SRC_INVESTMENTS_BOLT.stock_master sm
-    ON ds.ticker = sm.ticker;
+LEFT JOIN PROD_DB.SRC_INVESTMENTS_BOLT.vw_stock_master_enhanced sme  -- ✅ References SRC VIEW
+    ON ds.ticker = sme.ticker;
 
--- Intermediate View 3: Broker Information (broker details with performance metrics)
+-- Intermediate View 3: Broker Information (now references SRC VIEW instead of table)
 CREATE OR REPLACE VIEW vw_broker_info AS
 SELECT
     db.broker_key,
     db.broker_name,
     db.commission_rate,
     db.is_active,
-    -- Cross-schema reference to get broker master data
-    bm.broker_id as source_broker_id,
-    bm.contact_email
+    -- Cross-schema reference to SRC VIEW (not table directly)
+    bme.broker_id as source_broker_id,
+    bme.contact_email,
+    bme.total_accounts,
+    bme.total_balance_managed
 FROM PROD_DB.MART_INVESTMENTS_BOLT.dim_brokers db
-LEFT JOIN PROD_DB.SRC_INVESTMENTS_BOLT.broker_master bm
-    ON db.broker_name = bm.broker_name;
+LEFT JOIN PROD_DB.SRC_INVESTMENTS_BOLT.vw_broker_master_enhanced bme  -- ✅ References SRC VIEW
+    ON db.broker_name = bme.broker_name;
 
 -- Intermediate View 4: Daily Performance Metrics
 CREATE OR REPLACE VIEW vw_daily_performance AS

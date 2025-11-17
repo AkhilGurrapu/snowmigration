@@ -87,12 +87,48 @@ $$
                 target_ddl = source_ddl.replace(view_pattern, `$1 ${target_fqn} `);
             }
 
-            // FIX #2: Replace ALL occurrences of source database with target database in entire DDL
             // This handles references inside view definitions like: FROM PROD_DB.SRC_INVESTMENTS_BOLT.table_name
             var db_pattern = new RegExp(source_db, 'gi');
             target_ddl = target_ddl.replace(db_pattern, P_TARGET_DATABASE);
 
-            // FIX #1: Only store DDL for VIEWS (tables will be created via CTAS)
+            // GET_DDL() may return unqualified references for same-schema objects
+            // We need to add database.schema prefix to these references
+
+            // Get all objects in this migration to qualify unqualified references
+            var get_all_objects_sql = `
+                SELECT DISTINCT object_name, source_schema
+                FROM migration_share_objects
+                WHERE migration_id = ?
+                  AND object_name != ?
+            `;
+            var obj_stmt = snowflake.createStatement({
+                sqlText: get_all_objects_sql,
+                binds: [P_MIGRATION_ID, obj_name]
+            });
+            var all_objects = obj_stmt.execute();
+
+            // For each object, replace unqualified references with fully qualified ones
+            while (all_objects.next()) {
+                var ref_obj_name = all_objects.getColumnValue('OBJECT_NAME');
+                var ref_obj_schema = all_objects.getColumnValue('SOURCE_SCHEMA');
+                var qualified_name = `${P_TARGET_DATABASE}.${ref_obj_schema}.${ref_obj_name}`;
+
+                // Pattern to match unqualified references in FROM/JOIN clauses
+                // Matches: FROM table_name, JOIN table_name, from table_name, join table_name
+                // But NOT: FROM db.schema.table_name (already qualified)
+
+                // Match: FROM/JOIN followed by whitespace, then object_name, then whitespace or alias
+                // Negative lookbehind: not preceded by a dot (which would mean it's qualified)
+                var unqualified_pattern = new RegExp(
+                    '(from|join|,)\\s+(?!' + P_TARGET_DATABASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.)(' +
+                    ref_obj_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\s+',
+                    'gi'
+                );
+
+                // Replace with fully qualified name
+                target_ddl = target_ddl.replace(unqualified_pattern, `$1 ${qualified_name} `);
+            }
+
             if (obj_type === 'VIEW') {
                 var insert_ddl = `
                     INSERT INTO migration_ddl_scripts
