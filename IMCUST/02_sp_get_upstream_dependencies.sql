@@ -19,7 +19,7 @@ LANGUAGE JAVASCRIPT
 EXECUTE AS OWNER
 AS
 $$
-    var all_dependencies = new Set();  // Use Set to avoid duplicates
+    var dep_map = new Map();  // Use Map to store unique objects (key = fqn, value = {database, schema, name, type, level})
 
     // Parse the JSON string to get the array of object names
     var object_list = JSON.parse(P_OBJECT_LIST_JSON);
@@ -66,16 +66,25 @@ $$
                 if (distance > max_level) max_level = distance;
 
                 var dep_full_name = dep_database + '.' + dep_schema + '.' + dep_name;
+                var dep_key = dep_full_name;
 
-                // Store as JSON to preserve all info and avoid duplicates
-                all_dependencies.add(JSON.stringify({
-                    database: dep_database,
-                    schema: dep_schema,
-                    name: dep_name,
-                    full_name: dep_full_name,
-                    type: dep_type,
-                    level: distance
-                }));
+                // Only add if not already present, or if this has a lower level (closer dependency)
+                if (!dep_map.has(dep_key)) {
+                    dep_map.set(dep_key, {
+                        database: dep_database,
+                        schema: dep_schema,
+                        name: dep_name,
+                        full_name: dep_full_name,
+                        type: dep_type,
+                        level: distance
+                    });
+                } else {
+                    // If object already exists, keep the minimum level (closest dependency)
+                    var existing = dep_map.get(dep_key);
+                    if (distance < existing.level) {
+                        existing.level = distance;
+                    }
+                }
             }
         } catch (err) {
             // Object might not support lineage, skip
@@ -106,17 +115,16 @@ $$
         }
 
         // Add requested object with level 0
-        // IMPORTANT: Skip VIEWs - only migrate their table dependencies
-        // VIEWs are not shared or created on target, only their underlying tables
-        if (obj_type !== 'VIEW') {
-            all_dependencies.add(JSON.stringify({
+        var obj_key = `${P_DATABASE}.${P_SCHEMA}.${obj_name}`;
+        if (!dep_map.has(obj_key)) {
+            dep_map.set(obj_key, {
                 database: P_DATABASE,
                 schema: P_SCHEMA,
                 name: obj_name,
                 full_name: full_name,
                 type: obj_type,
                 level: 0
-            }));
+            });
         }
     }
 
@@ -128,10 +136,9 @@ $$
     });
     stmt.execute();
 
-    // Insert all discovered dependencies
+    // Insert all discovered unique dependencies
     var insert_count = 0;
-    all_dependencies.forEach(function(dep_json) {
-        var dep = JSON.parse(dep_json);
+    dep_map.forEach(function(dep, key) {
         var insert_sql = `
             INSERT INTO migration_share_objects
             (migration_id, source_database, source_schema, object_name, object_type, fully_qualified_name, dependency_level)
