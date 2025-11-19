@@ -62,3 +62,27 @@ The LLM approach is particularly useful for complex DDL with nested queries, CTE
 [16](https://www.youtube.com/watch?v=etBEpDmq5aA)
 [17](https://www.snowflake.com/en/developers/guides/e2emigration-sql-and-data/)
 [18](https://www.snowflake.com/en/developers/guides/end2endmigration/)
+
+
+-- MAIN
+
+SELECT SNOWFLAKE.CORTEX.COMPLETE(
+  'claude-3-5-sonnet',
+  'List only the table names used in this DDL, one per line: ' || 
+  GET_DDL('PROCEDURE', 'prod_db.mart_investments_bolt.sp_load_customer_analytics(DATE)')
+) AS table_list;
+
+
+
+
+WITH ai_response AS (
+  SELECT SNOWFLAKE.CORTEX.COMPLETE(
+    'claude-3-5-sonnet',
+    'List only the fully qualified table names (DATABASE.SCHEMA.TABLE) used in this stored procedure DDL, one per line with no other text: ' || 
+    GET_DDL('PROCEDURE', 'PROD_DB.ADMIN_SCHEMA.sp_get_upstream_dependencies(FLOAT, VARCHAR, VARCHAR, VARCHAR)')
+  ) AS result
+)
+SELECT TRIM(value::STRING) AS table_name
+FROM ai_response,
+LATERAL SPLIT_TO_TABLE(result, '\n')
+WHERE TRIM(value::STRING) != '';
